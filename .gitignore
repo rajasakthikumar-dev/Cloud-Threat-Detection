@@ -1,0 +1,75 @@
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+
+# Logs
+logs/
+*.log
+
+# Dataset / processed data
+dataset/*.csv
+dataset/processed/
+
+# Trained model files
+saved_models/*.h5
+saved_models/*.keras
+saved_models/*.pb
+*.h5
+*.keras
+*.ckpt
+*.ckpt.index
+*.ckpt.data-*
+checkpoint
+
+# Preprocessing generated files
+dataset/processed/*.pkl
+dataset/processed/*_cat.npy
+
+# Generated results
+results/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Build / Python packages
+build/
+dist/
+*.egg-info/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Firebase / service account credentials
+serviceAccountKey.json
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+
+# Temporary files
+*.tmp
+*.temp

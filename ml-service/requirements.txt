@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────
+# AI Threat Detection — ML Service
+# Python 3.10
+#
+# Install:  pip3 install -r requirements.txt
+#
+# NOTE: TensorFlow is NOT listed here.
+# The model uses a pure NumPy inference engine extracted from the
+# trained lstm_threat_detection.h5 file, so TF is not needed at
+# serve time. This avoids the AVX CPU instruction requirement.
+# ─────────────────────────────────────────────────────────────
+
+# Web framework
+fastapi==0.103.1
+uvicorn[standard]==0.23.2
+
+# Inference & preprocessing (already installed system-wide)
+numpy==1.24.3
+pandas==2.0.3
+scikit-learn==1.3.0
+joblib==1.3.2
+
+# H5 file reading (used only by _extract_weights.py, not at serve time)
+h5py>=3.0.0
+
+# HTTP client (for health-check tests)
+httpx==0.24.1
+
+# Form data / multipart support
+python-multipart==0.0.6
+
+# Environment variables
+python-dotenv==1.0.0
