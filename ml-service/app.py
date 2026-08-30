@@ -10,7 +10,7 @@ Loads the EXISTING trained artifacts:
   model/saved_models/model_weights.npz   (weights extracted from .h5)
   preprocessing/processed/scaler.pkl     (fitted StandardScaler)
   preprocessing/processed/encoder.pkl    (LabelEncoders for proto/service/state)
-  ../dataset/processed/feature_names.pkl (exact 42-feature ordered list)
+  preprocessing/processed/feature_names.pkl (exact 42-feature ordered list)
 
 Endpoints
 ---------
@@ -89,7 +89,7 @@ ENCODER_PATH = os.getenv(
 )
 FEAT_NAMES_PATH = os.getenv(
     "FEAT_NAMES_PATH",
-    os.path.join(PROJ_ROOT, "dataset", "processed", "feature_names.pkl")
+    os.path.join(ML_SERVICE_DIR, "preprocessing", "processed", "feature_names.pkl")
 )
 H5_PATH = os.path.join(ML_SERVICE_DIR, "model", "saved_models", "lstm_threat_detection.h5")
 

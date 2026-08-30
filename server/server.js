@@ -135,10 +135,10 @@ app.use((err, _req, res, _next) => {
 // START SERVER
 // ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n${'='.repeat(50)}`);
   console.log(`  AI Threat Detection API`);
-  console.log(`  Listening on http://localhost:${PORT}`);
+  console.log(`  Listening on http://0.0.0.0:${PORT}`);
   console.log(`  Environment : ${process.env.NODE_ENV || 'development'}`);
   console.log(`${'='.repeat(50)}\n`);
 });
