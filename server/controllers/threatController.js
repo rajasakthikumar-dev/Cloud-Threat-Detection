@@ -7,6 +7,7 @@
 
 const axios = require('axios');
 const { logThreat, logActivity, db, COLLECTIONS } = require('../config/firebase');
+const { getClientIp } = require('../utils/ipExtractor');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 
@@ -38,6 +39,10 @@ async function analyzeActivity(req, res) {
 
     const { attack_type, risk_level, confidence_score } = mlResult;
 
+    // Extract real client IP
+    const clientIp = getClientIp(req);
+    const sourceIp = source_ip || clientIp;
+
     // Persist to Firebase
     const threatId = await logThreat({
       userId:          req.user.id,
@@ -45,7 +50,7 @@ async function analyzeActivity(req, res) {
       attack_type,
       risk_level,
       confidence_score,
-      source_ip:       source_ip || req.ip,
+      source_ip:       sourceIp,
       raw_input:       features,
     });
 
@@ -55,7 +60,7 @@ async function analyzeActivity(req, res) {
       userEmail:  req.user.email,
       event_type: 'threat_detected',
       details:    `${attack_type} detected — Risk: ${risk_level} (${confidence_score}%)`,
-      ip_address: req.ip,
+      ip_address: clientIp,
     });
 
     // Broadcast real-time alert via Socket.io to all connected clients
@@ -66,7 +71,7 @@ async function analyzeActivity(req, res) {
         attack_type,
         risk_level,
         confidence_score,
-        source_ip: source_ip || req.ip,
+        source_ip: sourceIp,
         timestamp: new Date().toISOString(),
         userId: req.user.id,
       });
@@ -145,18 +150,26 @@ async function getThreatStats(req, res) {
     snap.docs.forEach(doc => {
       const d = doc.data();
 
+      // Count risk levels
       if (d.risk_level === 'High')        high++;
       else if (d.risk_level === 'Medium') medium++;
       else                                low++;
 
+      // Count attack categories (based on actual ML prediction)
       const cat = d.attack_type || 'Unknown';
       catCounts[cat] = (catCounts[cat] || 0) + 1;
 
-      // Group by date for timeline
+      // Group by date for timeline (Normal vs Attack)
+      // FIXED: Use attack_type field (ML prediction), NOT risk_level
       const date = d.timestamp?.toDate()?.toLocaleDateString() || 'Unknown';
       if (!timeMap[date]) timeMap[date] = { normal: 0, attack: 0 };
-      if (d.risk_level === 'Low') timeMap[date].normal++;
-      else timeMap[date].attack++;
+      
+      if (d.attack_type === 'Normal') {
+        timeMap[date].normal++;
+      } else if (d.attack_type === 'Attack') {
+        timeMap[date].attack++;
+      }
+      // Records without attack_type are ignored (don't count as Normal or Attack)
     });
 
     const categories = Object.entries(catCounts)

@@ -6,100 +6,147 @@ import DashboardCard from '../components/DashboardCard';
 import AlertBox from '../components/AlertBox';
 import ThreatChart, { AttackCategoryBar, RiskLevelPie } from '../components/ThreatChart';
 import { getAdminStats, getRecentThreats } from '../services/api';
-import { useSocket } from '../App';
+import { useSocket, useAuth } from '../App';
 
-const layout = {
-  wrapper:  { display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0f172a' },
-  body:     { display: 'flex', flex: 1 },
-  main:     { flex: 1, padding: '28px', overflow: 'auto' },
-  heading:  { fontSize: '20px', fontWeight: 700, color: '#f1f5f9', marginBottom: '6px' },
-  sub:      { fontSize: '13px', color: '#64748b', marginBottom: '24px' },
-  cards:    { display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '28px' },
-  grid2:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '28px' },
-  grid3:    { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '28px' },
-  alertList:{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '28px' },
-  sectionTitle: { fontSize: '14px', fontWeight: 600, color: '#94a3b8', marginBottom: '12px',
-                  textTransform: 'uppercase', letterSpacing: '0.06em' },
-};
+/**
+ * AdminDashboard - platform overview with real-time threat alerts
+ * FIXED: Added auth initialization check to prevent race conditions
+ */
 
-// Placeholder data shown until the API responds
 const PLACEHOLDER = {
-  stats:  { users: 0, files: 0, threats: 0, alerts: 0 },
+  stats:  { users:0, files:0, threats:0, alerts:0 },
   area:   [],
   bar:    [],
-  pie:    [{ name: 'Low', value: 60 }, { name: 'Medium', value: 30 }, { name: 'High', value: 10 }],
+  pie:    [{ name:'Low', value:60 }, { name:'Medium', value:30 }, { name:'High', value:10 }],
   recent: [],
 };
 
 export default function AdminDashboard() {
   const socket = useSocket();
-  const [stats,   setStats]   = useState(PLACEHOLDER.stats);
-  const [area,    setArea]    = useState(PLACEHOLDER.area);
-  const [bar,     setBar]     = useState(PLACEHOLDER.bar);
-  const [pie,     setPie]     = useState(PLACEHOLDER.pie);
-  const [recent,  setRecent]  = useState(PLACEHOLDER.recent);
-  const [rtAlerts, setRtAlerts] = useState([]);   // real-time socket alerts
-  const [loading, setLoading] = useState(true);
+  const { initializing } = useAuth();
+  const [stats,    setStats]    = useState(PLACEHOLDER.stats);
+  const [area,     setArea]     = useState(PLACEHOLDER.area);
+  const [bar,      setBar]      = useState(PLACEHOLDER.bar);
+  const [pie,      setPie]      = useState(PLACEHOLDER.pie);
+  const [recent,   setRecent]   = useState(PLACEHOLDER.recent);
+  const [rtAlerts, setRtAlerts] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
 
   useEffect(() => {
+    // FIX: Wait for auth to initialize
+    if (initializing) return;
+    
     async function fetchAll() {
+      setError(null);
       try {
-        const [statsRes, threatsRes] = await Promise.all([
-          getAdminStats(),
-          getRecentThreats(),
-        ]);
+        const [statsRes, threatsRes] = await Promise.all([getAdminStats(), getRecentThreats()]);
         const d = statsRes.data;
-        setStats({ users: d.totalUsers, files: d.totalFiles, threats: d.totalThreats, alerts: d.activeAlerts });
+        setStats({ 
+          users: d.totalUsers || 0, 
+          files: d.totalFiles || 0, 
+          threats: d.totalThreats || 0, 
+          alerts: d.activeAlerts || 0 
+        });
         setArea(d.trafficTimeline  || []);
         setBar(d.categoryBreakdown || []);
         setPie(d.riskDistribution  || PLACEHOLDER.pie);
         setRecent(threatsRes.data.threats || []);
-      } catch (_) { /* use placeholder data on error */ }
-      finally { setLoading(false); }
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to load dashboard data.');
+      } finally { 
+        setLoading(false); 
+      }
     }
     fetchAll();
-  }, []);
+  }, [initializing]);
 
-  // Accumulate real-time threat alerts from Socket.io
   useEffect(() => {
     if (!socket) return;
     const handler = (data) => {
       setRtAlerts(prev => [data, ...prev].slice(0, 5));
-      setStats(prev => ({ ...prev, alerts: prev.alerts + 1, threats: prev.threats + 1 }));
+      setStats(prev => ({ 
+        ...prev, 
+        alerts: prev.alerts + 1, 
+        threats: prev.threats + 1 
+      }));
     };
     socket.on('threat_alert', handler);
     return () => socket.off('threat_alert', handler);
   }, [socket]);
 
-  return (
-    <div style={layout.wrapper}>
-      <Navbar />
-      <div style={layout.body}>
-        <Sidebar />
-        <main style={layout.main}>
-          <h1 style={layout.heading}>Admin Dashboard</h1>
-          <p style={layout.sub}>Real-time overview of platform activity and threat intelligence.</p>
+  const sectionTitle = { 
+    fontSize: 'var(--font-size-xs)', 
+    fontWeight: 700, 
+    color: 'var(--text-secondary)', 
+    textTransform: 'uppercase', 
+    letterSpacing: '0.1em', 
+    marginBottom: '1rem', 
+    marginTop: '0.25rem' 
+  };
 
-          {/* ── KPI Cards ── */}
-          <div style={layout.cards}>
-            <DashboardCard title="Total Users"    value={stats.users}   icon={<FiUsers />}         color="#38bdf8" subtitle="Registered accounts" />
-            <DashboardCard title="Files in S3"    value={stats.files}   icon={<FiFolder />}        color="#22c55e" subtitle="Uploaded files" />
-            <DashboardCard title="Threats Logged" value={stats.threats} icon={<FiAlertTriangle />} color="#ef4444" subtitle="All-time detections" />
-            <DashboardCard title="Active Alerts"  value={stats.alerts}  icon={<FiShield />}        color="#f59e0b" subtitle="Pending review" />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-page)' }}>
+      <Navbar />
+      <div style={{ display: 'flex', flex: 1 }}>
+        <Sidebar />
+        <main style={{ flex: 1, padding: '2rem', overflow: 'auto' }}>
+
+          {/* Header */}
+          <div style={{ marginBottom: '2rem', animation: 'fadeInUp 0.35s ease' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', marginBottom: '0.5rem' }}>
+              <div style={{ 
+                width: '48px', 
+                height: '48px', 
+                borderRadius: 'var(--radius-lg)', 
+                background: 'var(--primary)', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                boxShadow: 'var(--shadow-md)' 
+              }}>
+                <FiShield size={24} color="white" />
+              </div>
+              <h1 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                Admin Dashboard
+              </h1>
+            </div>
+            <p style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)', fontWeight: 500, marginLeft: '62px' }}>
+              Real-time overview of platform activity and threat intelligence
+            </p>
           </div>
 
-          {/* ── Real-time alerts from socket ── */}
+          {/* Error state */}
+          {error && (
+            <div style={{ marginBottom: '2rem' }}>
+              <AlertBox type="error" title="Failed to Load Dashboard" message={error} />
+            </div>
+          )}
+
+          {/* KPI Cards */}
+          <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+            <DashboardCard title="Total Users"    value={stats.users}   icon={<FiUsers />}         color="var(--primary)" subtitle="Registered accounts" />
+            <DashboardCard title="Files in S3"    value={stats.files}   icon={<FiFolder />}        color="var(--success)" subtitle="Uploaded files" />
+            <DashboardCard title="Threats Logged" value={stats.threats} icon={<FiAlertTriangle />} color="var(--danger)" subtitle="All-time detections" />
+            <DashboardCard title="Active Alerts"  value={stats.alerts}  icon={<FiActivity />}      color="var(--warning)" subtitle="Pending review" />
+          </div>
+
+          {/* Real-time alerts */}
           {rtAlerts.length > 0 && (
             <>
-              <p style={layout.sectionTitle}>Live Threat Alerts</p>
-              <div style={layout.alertList}>
+              <p style={sectionTitle}>Live Threat Alerts</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '2rem' }}>
                 {rtAlerts.map((alert, i) => (
                   <AlertBox
                     key={i}
                     type={alert.risk_level === 'High' ? 'error' : alert.risk_level === 'Medium' ? 'warning' : 'info'}
                     title={`${alert.attack_type} — ${alert.risk_level} Risk`}
                     message={`Confidence: ${alert.confidence_score}%`}
-                    details={{ 'Attack Type': alert.attack_type, 'Risk Level': alert.risk_level, 'Confidence': `${alert.confidence_score}%` }}
+                    details={{ 
+                      'Attack Type': alert.attack_type, 
+                      'Risk Level': alert.risk_level, 
+                      'Confidence': `${alert.confidence_score}%` 
+                    }}
                     onDismiss={() => setRtAlerts(prev => prev.filter((_, j) => j !== i))}
                   />
                 ))}
@@ -107,21 +154,31 @@ export default function AdminDashboard() {
             </>
           )}
 
-          {/* ── Traffic chart ── */}
-          <p style={layout.sectionTitle}>Traffic Overview</p>
-          <div style={{ marginBottom: '24px' }}>
-            <ThreatChart type="area" data={area} />
-          </div>
+          {/* Traffic chart */}
+          {!loading && !error && (
+            <>
+              <p style={sectionTitle}>Traffic Overview</p>
+              <div style={{ marginBottom: '1.75rem' }}>
+                <ThreatChart type="area" data={area} />
+              </div>
 
-          {/* ── Bar + Pie ── */}
-          <div style={layout.grid2}>
-            <AttackCategoryBar data={bar} />
-            <RiskLevelPie data={pie} />
-          </div>
+              {/* Bar + Pie */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+                <AttackCategoryBar data={bar} />
+                <RiskLevelPie data={pie} />
+              </div>
 
-          {/* ── Recent threats table ── */}
-          <p style={layout.sectionTitle}>Recent Threats</p>
-          <RecentThreatsTable rows={recent} loading={loading} />
+              {/* Recent threats */}
+              <p style={sectionTitle}>Recent Threats</p>
+              <RecentThreatsTable rows={recent} loading={loading} />
+            </>
+          )}
+
+          {loading && !error && (
+            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)', fontSize: 'var(--font-size-base)' }}>
+              Loading dashboard data...
+            </div>
+          )}
         </main>
       </div>
     </div>
@@ -129,37 +186,117 @@ export default function AdminDashboard() {
 }
 
 function RecentThreatsTable({ rows, loading }) {
-  const th = { padding: '10px 14px', fontSize: '11px', fontWeight: 700, color: '#475569',
-               textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left' };
-  const td = { padding: '11px 14px', fontSize: '13px', color: '#94a3b8', borderTop: '1px solid #1e293b' };
-  const riskColor = r => r === 'High' ? '#ef4444' : r === 'Medium' ? '#f59e0b' : '#22c55e';
+  const riskColor = r => r === 'High' ? 'var(--danger)' : r === 'Medium' ? 'var(--warning)' : 'var(--success)';
+  const riskBg    = r => r === 'High' ? 'var(--danger-light)' : r === 'Medium' ? 'var(--warning-light)' : 'var(--success-light)';
+
+  const formatTimestamp = (ts) => {
+    if (!ts) return '—';
+    try {
+      const date = ts.toDate ? ts.toDate() : new Date(ts);
+      if (isNaN(date.getTime())) return '—';
+      return new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      }).format(date).replace(',', '');
+    } catch {
+      return '—';
+    }
+  };
 
   return (
-    <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead style={{ background: '#0f172a' }}>
-          <tr>
-            {['Attack Type', 'Risk Level', 'Confidence', 'Source IP', 'Time'].map(h => (
-              <th key={h} style={th}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            <tr><td colSpan={5} style={{ ...td, textAlign: 'center', color: '#475569' }}>Loading…</td></tr>
-          ) : rows.length === 0 ? (
-            <tr><td colSpan={5} style={{ ...td, textAlign: 'center', color: '#475569' }}>No threats logged yet.</td></tr>
-          ) : rows.map((r, i) => (
-            <tr key={i}>
-              <td style={td}>{r.attack_type}</td>
-              <td style={td}><span style={{ color: riskColor(r.risk_level), fontWeight: 600 }}>{r.risk_level}</span></td>
-              <td style={td}>{r.confidence_score}%</td>
-              <td style={{ ...td, fontFamily: 'monospace', fontSize: '12px' }}>{r.source_ip || '—'}</td>
-              <td style={td}>{r.timestamp ? new Date(r.timestamp).toLocaleString() : '—'}</td>
+    <div style={{ 
+      background: 'var(--bg-primary)', 
+      border: '1px solid var(--border-color)', 
+      borderRadius: 'var(--radius-lg)', 
+      overflow: 'hidden',
+      boxShadow: 'var(--shadow-md)'
+    }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ background: 'var(--bg-secondary)' }}>
+            <tr>
+              {['Attack Type', 'Risk Level', 'Confidence', 'Source IP', 'Time'].map(h => (
+                <th key={h} style={{ 
+                  padding: '0.875rem 1rem', 
+                  fontSize: 'var(--font-size-sm)', 
+                  fontWeight: 700, 
+                  color: 'var(--text-secondary)', 
+                  textTransform: 'uppercase', 
+                  letterSpacing: '0.05em', 
+                  textAlign: 'left',
+                  borderBottom: '2px solid var(--border-color)'
+                }}>
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={5} style={{ 
+                  padding: '2rem', 
+                  textAlign: 'center', 
+                  color: 'var(--text-secondary)', 
+                  fontSize: 'var(--font-size-base)' 
+                }}>
+                  Loading recent threats...
+                </td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ 
+                  padding: '2rem', 
+                  textAlign: 'center', 
+                  color: 'var(--text-muted)', 
+                  fontSize: 'var(--font-size-base)' 
+                }}>
+                  No threats logged yet
+                </td>
+              </tr>
+            ) : rows.map((r, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid var(--border-color)', transition: 'var(--transition)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500 }}>
+                  {r.attack_type}
+                </td>
+                <td style={{ padding: '0.875rem 1rem' }}>
+                  <span style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '0.375rem', 
+                    padding: '0.375rem 0.75rem', 
+                    borderRadius: '999px', 
+                    fontSize: 'var(--font-size-xs)', 
+                    fontWeight: 700, 
+                    background: riskBg(r.risk_level), 
+                    color: riskColor(r.risk_level),
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}>
+                    {r.risk_level}
+                  </span>
+                </td>
+                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)' }}>
+                  {r.confidence_score}%
+                </td>
+                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                  {r.source_ip || '—'}
+                </td>
+                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)' }}>
+                  {formatTimestamp(r.timestamp)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

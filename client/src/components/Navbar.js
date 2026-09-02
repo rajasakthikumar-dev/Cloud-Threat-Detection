@@ -1,130 +1,177 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
-import { FiShield, FiLogOut, FiBell, FiUser } from 'react-icons/fi';
 import { logoutUser } from '../services/api';
+import { FiShield, FiLogOut, FiBell } from 'react-icons/fi';
 
-const styles = {
-  nav: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 24px',
-    height: '60px',
-    background: '#1e293b',
-    borderBottom: '1px solid #334155',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
-  },
-  brand: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    color: '#38bdf8',
-    textDecoration: 'none',
-    fontWeight: 700,
-    fontSize: '18px',
-    letterSpacing: '0.02em',
-  },
-  right: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '20px',
-  },
-  userBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '6px 12px',
-    background: '#0f172a',
-    borderRadius: '8px',
-    fontSize: '13px',
-    color: '#94a3b8',
-  },
-  rolePill: {
-    padding: '2px 8px',
-    borderRadius: '999px',
-    fontSize: '11px',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  },
-  logoutBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '7px 14px',
-    background: 'transparent',
-    border: '1px solid #475569',
-    borderRadius: '8px',
-    color: '#94a3b8',
-    cursor: 'pointer',
-    fontSize: '13px',
-    transition: 'all 0.2s',
-  },
-};
+/**
+ * Navbar - professional light theme with dark navy header
+ * FIXED: 16px+ font sizes, white text on dark navy
+ */
 
-function Navbar() {
+export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     try {
-      // Record logout event in Firestore before clearing local state.
-      // Fire-and-forget with a short timeout — user must be logged out
-      // even if the request fails (expired token, network issue, etc.).
       await Promise.race([
         logoutUser(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
       ]);
     } catch {
-      // Swallow errors — logout must always succeed on the client side.
+      // Swallow — client logout must always succeed
     } finally {
       logout();
       navigate('/login');
     }
   };
 
-  const roleColor = user?.role === 'admin'
-    ? { background: '#7c3aed', color: '#fff' }
-    : { background: '#0369a1', color: '#fff' };
+  const initials = user?.name
+    ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+    : user?.email?.[0]?.toUpperCase() || 'U';
 
   return (
-    <nav style={styles.nav}>
+    <nav style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '0 2rem',
+      height: '70px',
+      background: 'var(--nav-bg)', // dark navy
+      borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+      position: 'sticky',
+      top: 0,
+      zIndex: 200,
+      boxShadow: '0 2px 16px rgba(0, 0, 0, 0.1)',
+    }}>
       {/* Brand */}
-      <Link to={user?.role === 'admin' ? '/admin' : '/dashboard'} style={styles.brand}>
-        <FiShield size={22} />
+      <Link to={user?.role === 'admin' ? '/admin' : '/dashboard'} style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem',
+        textDecoration: 'none',
+        fontWeight: 700,
+        fontSize: 'var(--font-size-xl)',
+        letterSpacing: '-0.02em',
+        color: 'var(--text-white)',
+      }}>
+        <span style={{
+          background: 'var(--primary)',
+          borderRadius: 'var(--radius-md)',
+          padding: '0.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)',
+        }}>
+          <FiShield size={20} color="#fff" />
+        </span>
         AI Threat Detection
       </Link>
 
-      {/* Right side */}
-      <div style={styles.right}>
-        {/* Notification bell placeholder */}
-        <FiBell size={18} color="#64748b" title="Alerts" />
+      {/* Right section */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.125rem' }}>
+        {/* Notification bell */}
+        <button
+          style={{
+            background: 'rgba(255, 255, 255, 0.1)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: 'var(--radius-md)',
+            width: '44px',
+            height: '44px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: 'var(--text-white)',
+            transition: 'var(--transition)',
+          }}
+          title="Alerts"
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'; }}
+        >
+          <FiBell size={18} />
+        </button>
 
-        {/* User info */}
+        {/* User badge */}
         {user && (
-          <div style={styles.userBadge}>
-            <FiUser size={14} />
-            <span>{user.name || user.email}</span>
-            <span style={{ ...styles.rolePill, ...roleColor }}>{user.role}</span>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: '0.5rem 1rem 0.5rem 0.625rem',
+            background: 'rgba(255, 255, 255, 0.1)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: 'var(--radius-md)',
+          }}>
+            <div style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--primary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff',
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 700,
+            }}>
+              {initials}
+            </div>
+            <span style={{
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 600,
+              color: 'var(--text-white)',
+              maxWidth: '140px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {user.name || user.email}
+            </span>
+            <span style={{
+              padding: '0.25rem 0.625rem',
+              borderRadius: '999px',
+              fontSize: 'var(--font-size-xs)',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              background: user.role === 'admin' ? 'var(--purple)' : 'var(--info)',
+              color: '#fff',
+              boxShadow: user.role === 'admin'
+                ? '0 2px 8px rgba(139, 92, 246, 0.4)'
+                : '0 2px 8px rgba(37, 99, 235, 0.4)',
+            }}>
+              {user.role}
+            </span>
           </div>
         )}
 
         {/* Logout */}
         <button
-          style={styles.logoutBtn}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.625rem 1.125rem',
+            background: 'rgba(239, 68, 68, 0.15)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 'var(--radius-md)',
+            color: '#fca5a5',
+            cursor: 'pointer',
+            fontSize: 'var(--font-size-base)',
+            fontWeight: 600,
+            transition: 'var(--transition)',
+          }}
           onClick={handleLogout}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#ef4444'; e.currentTarget.style.color = '#ef4444'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = '#475569'; e.currentTarget.style.color = '#94a3b8'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
         >
-          <FiLogOut size={14} />
+          <FiLogOut size={16} />
           Logout
         </button>
       </div>
     </nav>
   );
 }
-
-export default Navbar;

@@ -3,6 +3,11 @@
  * ----------------
  * Centralised Axios client for all API calls to the Node.js backend.
  *
+ * CRITICAL FIX: Per-session token management
+ * - Each browser tab uses its own session-specific token
+ * - No cross-tab authentication contamination
+ * - Admin sessions remain admin, user sessions remain user
+ *
  * - Automatically attaches the JWT token from localStorage to every request.
  * - Handles 401 responses globally by clearing auth state and redirecting.
  * - Provides named functions for every backend endpoint so pages never
@@ -20,11 +25,37 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+/**
+ * CRITICAL FIX: Get current session ID from DOM
+ * Each tab has a unique session ID stored in the React component tree.
+ * We retrieve it from the window object where App.js will attach it.
+ */
+function getSessionId() {
+  // The session ID is set by App.js via a custom event
+  return window.__KIRO_SESSION_ID__ || null;
+}
+
+/**
+ * CRITICAL FIX: Get session-specific token key
+ */
+function getTokenKey() {
+  const sessionId = getSessionId();
+  return sessionId ? `token_${sessionId}` : 'token';
+}
+
+/**
+ * CRITICAL FIX: Get session-specific user key
+ */
+function getUserKey() {
+  const sessionId = getSessionId();
+  return sessionId ? `user_${sessionId}` : 'user';
+}
+
 // ── Request interceptor ─────────────────────────────────────
-// Attach Bearer token to every outgoing request if one exists.
+// CRITICAL FIX: Attach session-specific Bearer token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem(getTokenKey());
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -34,14 +65,19 @@ api.interceptors.request.use(
 );
 
 // ── Response interceptor ────────────────────────────────────
-// On 401 Unauthorized, clear local auth state and redirect to login.
+// CRITICAL FIX: On 401, clear session-specific auth state
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      // Clear THIS session's auth data
+      localStorage.removeItem(getTokenKey());
+      localStorage.removeItem(getUserKey());
+      
+      // Don't redirect if we're already on the login page
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

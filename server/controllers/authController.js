@@ -15,6 +15,8 @@ const {
   logActivity,
 } = require('../config/firebase');
 
+const { getClientIp } = require('../utils/ipExtractor');
+
 // ─────────────────────────────────────────────────────────────
 // REGISTER
 // POST /api/auth/register
@@ -56,12 +58,13 @@ async function register(req, res) {
     });
 
     // Log the registration event
+    const clientIp = getClientIp(req);
     await logActivity({
       userId,
       userEmail:  email.toLowerCase(),
       event_type: 'user_created',
       details:    `New user registered: ${name} (${role})`,
-      ip_address: req.ip,
+      ip_address: clientIp,
     });
 
     // Return token so the user can be immediately logged in from the frontend
@@ -98,6 +101,7 @@ async function login(req, res) {
     }
 
     // Verify password
+    const clientIp = getClientIp(req);
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) {
       await logActivity({
@@ -105,7 +109,7 @@ async function login(req, res) {
         userEmail:  user.email,
         event_type: 'login_failed',
         details:    'Incorrect password attempt',
-        ip_address: req.ip,
+        ip_address: clientIp,
       });
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
@@ -118,8 +122,8 @@ async function login(req, res) {
       userId:     user.id,
       userEmail:  user.email,
       event_type: 'login',
-      details:    `User logged in from ${req.ip}`,
-      ip_address: req.ip,
+      details:    `User logged in from ${clientIp}`,
+      ip_address: clientIp,
     });
 
     return res.json({
@@ -143,12 +147,13 @@ async function login(req, res) {
 // Firestore activity_logs before the client clears its storage.
 async function logout(req, res) {
   try {
+    const clientIp = getClientIp(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'logout',
       details:    `User logged out (${req.user.role})`,
-      ip_address: req.ip,
+      ip_address: clientIp,
     });
     return res.json({ message: 'Logged out successfully.' });
   } catch (err) {

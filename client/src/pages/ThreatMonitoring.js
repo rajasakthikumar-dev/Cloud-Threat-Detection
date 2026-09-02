@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FiRefreshCw, FiAlertTriangle, FiFilter, FiX,
   FiUser, FiClock, FiActivity, FiFolder, FiShield,
@@ -10,105 +10,40 @@ import Sidebar   from '../components/Sidebar';
 import DashboardCard from '../components/DashboardCard';
 import { ThreatAreaChart, AttackCategoryBar, RiskLevelPie } from '../components/ThreatChart';
 import { getThreats, getThreatStats, getThreatDetail } from '../services/api';
-import { useSocket } from '../App';
+import { useSocket, useAuth } from '../App';
 
-// ─── Style tokens ────────────────────────────────────────────
-const s = {
-  wrapper:  { display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0f172a' },
-  body:     { display: 'flex', flex: 1 },
-  main:     { flex: 1, padding: '28px', overflow: 'auto' },
-  heading:  { fontSize: '20px', fontWeight: 700, color: '#f1f5f9', marginBottom: '4px' },
-  sub:      { fontSize: '13px', color: '#64748b', marginBottom: '24px' },
-  toolbar:  { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' },
-  select: {
-    padding: '8px 12px', background: '#1e293b', border: '1px solid #334155',
-    borderRadius: '8px', color: '#94a3b8', fontSize: '13px', outline: 'none',
-  },
-  refreshBtn: {
-    display: 'flex', alignItems: 'center', gap: '6px',
-    padding: '8px 14px', background: '#0369a1', border: 'none',
-    borderRadius: '8px', color: '#fff', fontSize: '13px', cursor: 'pointer',
-    marginLeft: 'auto',
-  },
-  cards:    { display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '28px' },
-  grid2:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' },
-  section:  { fontSize: '14px', fontWeight: 600, color: '#94a3b8', marginBottom: '12px',
-              textTransform: 'uppercase', letterSpacing: '0.06em' },
-  tableWrap:{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', overflow: 'hidden' },
-  th: { padding: '10px 14px', fontSize: '11px', fontWeight: 700, color: '#475569',
-        textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left' },
-  td: { padding: '11px 14px', fontSize: '13px', color: '#94a3b8', borderTop: '1px solid #1e293b' },
-  // Modal
-  overlay: {
-    position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)',
-    backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', zIndex: 2000, padding: '20px',
-  },
-  modal: {
-    background: '#1e293b', border: '1px solid #334155', borderRadius: '16px',
-    width: '100%', maxWidth: '860px', maxHeight: '90vh',
-    display: 'flex', flexDirection: 'column', overflow: 'hidden',
-    boxShadow: '0 30px 60px -12px rgba(0,0,0,0.7)',
-  },
-  mHead: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '18px 24px', borderBottom: '1px solid #334155', background: '#0f172a',
-  },
-  mBody:   { padding: '24px', overflow: 'auto', flex: 1 },
-  mFoot: {
-    padding: '14px 24px', borderTop: '1px solid #334155', background: '#0f172a',
-    display: 'flex', justifyContent: 'flex-end',
-  },
-  row2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' },
-  infoCard: {
-    background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 16px',
-  },
-  infoLabel: { fontSize: '10px', fontWeight: 700, color: '#475569', textTransform: 'uppercase',
-               letterSpacing: '0.08em', marginBottom: '4px' },
-  infoValue: { fontSize: '14px', color: '#e2e8f0', fontWeight: 500 },
-  badge: (bg, color) => ({
-    display: 'inline-block', padding: '2px 10px', borderRadius: '999px',
-    fontSize: '11px', fontWeight: 700, background: bg, color,
-  }),
-  sectionHead: {
-    display: 'flex', alignItems: 'center', gap: '8px',
-    fontSize: '12px', fontWeight: 700, color: '#64748b',
-    textTransform: 'uppercase', letterSpacing: '0.08em',
-    marginTop: '20px', marginBottom: '10px',
-  },
-  actRow: {
-    display: 'flex', alignItems: 'flex-start', gap: '10px',
-    padding: '8px 0', borderBottom: '1px solid #1e293b',
-    fontSize: '12px', color: '#94a3b8',
-  },
-  closeBtn: {
-    background: '#334155', border: 'none', borderRadius: '8px', color: '#e2e8f0',
-    padding: '8px 20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-  },
-};
+/**
+ * ThreatMonitoring - Professional SOC Dashboard
+ * IMPROVED: Large readable fonts (14-16px+), professional light theme, real data only
+ * 
+ * DATA FLOW:
+ * - getThreatStats() → Returns aggregated data for charts (timeline, categories, risk distribution)
+ * - getThreats() → Returns individual threat records for the detection log table
+ * - All data comes from Firestore threat_logs collection
+ * - NO fake/static data
+ */
 
 const RISK_COLORS  = { High: '#ef4444', Medium: '#f59e0b', Low: '#22c55e' };
-const RISK_BG      = { High: '#450a0a', Medium: '#1c1208', Low: '#052e16' };
+const RISK_BG      = { High: '#fee2e2', Medium: '#fef3c7', Low: '#dcfce7' };
 const EVENT_ICONS  = {
-  login:         <FiLogIn size={12} color="#38bdf8" />,
-  logout:        <FiLogIn size={12} color="#64748b" />,
-  file_upload:   <FiFolder size={12} color="#4ade80" />,
-  file_download: <FiFolder size={12} color="#60a5fa" />,
-  file_delete:   <FiFolder size={12} color="#f87171" />,
-  threat_detected:<FiAlertCircle size={12} color="#ef4444" />,
+  login:         <FiLogIn size={14} color="var(--info)" />,
+  logout:        <FiLogIn size={14} color="var(--text-muted)" />,
+  file_upload:   <FiFolder size={14} color="var(--success)" />,
+  file_download: <FiFolder size={14} color="var(--info)" />,
+  file_delete:   <FiFolder size={14} color="var(--danger)" />,
+  threat_detected:<FiAlertCircle size={14} color="var(--danger)" />,
 };
 
-// ─── Clickable KPI card wrapper ──────────────────────────────
 function ClickCard({ title, value, icon, color, active, onClick }) {
   return (
     <div
       onClick={onClick}
       style={{
         cursor: 'pointer',
-        flex: '1 1 160px',
+        flex: '1 1 200px',
         outline: active ? `2px solid ${color}` : '2px solid transparent',
         outlineOffset: '2px',
-        borderRadius: '12px',
+        borderRadius: 'var(--radius-lg)',
         transition: 'outline 0.15s',
       }}
       title={`Click to filter by ${title}`}
@@ -118,22 +53,21 @@ function ClickCard({ title, value, icon, color, active, onClick }) {
   );
 }
 
-// ─── Raw-input key-value table ────────────────────────────────
 function RawInputTable({ data }) {
   const entries = Object.entries(data || {}).filter(([, v]) => v !== '' && v !== null && v !== undefined);
-  if (!entries.length) return <p style={{ color: '#475569', fontSize: '12px' }}>No raw input captured.</p>;
+  if (!entries.length) return <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-base)' }}>No raw input captured.</p>;
   return (
-    <div style={{ overflowX: 'auto', maxHeight: '160px', overflowY: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+    <div style={{ overflowX: 'auto', maxHeight: '200px', overflowY: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
         <tbody>
           {entries.map(([k, v]) => (
             <tr key={k}>
-              <td style={{ padding: '4px 8px', color: '#64748b', fontWeight: 600,
-                           borderBottom: '1px solid #1e293b', whiteSpace: 'nowrap', width: '35%' }}>
+              <td style={{ padding: '0.5rem', color: 'var(--text-secondary)', fontWeight: 600,
+                           borderBottom: '1px solid var(--border-color)', whiteSpace: 'nowrap', width: '35%' }}>
                 {k}
               </td>
-              <td style={{ padding: '4px 8px', color: '#e2e8f0', fontFamily: 'monospace',
-                           borderBottom: '1px solid #1e293b', wordBreak: 'break-all' }}>
+              <td style={{ padding: '0.5rem', color: 'var(--text-primary)', fontFamily: 'monospace',
+                           borderBottom: '1px solid var(--border-color)', wordBreak: 'break-all' }}>
                 {String(v)}
               </td>
             </tr>
@@ -144,9 +78,9 @@ function RawInputTable({ data }) {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────
 export default function ThreatMonitoring() {
   const socket = useSocket();
+  const { initializing } = useAuth();
 
   const [stats,      setStats]      = useState({ total: 0, high: 0, medium: 0, low: 0 });
   const [threats,    setThreats]    = useState([]);
@@ -156,14 +90,17 @@ export default function ThreatMonitoring() {
   const [riskFilter, setRiskFilter] = useState('All');
   const [loading,    setLoading]    = useState(true);
   const [spinning,   setSpinning]   = useState(false);
+  const [error,      setError]      = useState(null);
 
-  // Modal state
   const [modalOpen,    setModalOpen]    = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
-  const [detail,       setDetail]       = useState(null);  // { threat, loginAttempts, relatedActivity, fileActivity }
+  const [detail,       setDetail]       = useState(null);
 
-  // ── Load all threats + stats ────────────────────────────────
-  const load = useCallback(async () => {
+  // Load threat data - uses REAL Firestore data
+  const load = async () => {
+    if (initializing) return;
+    
+    setError(null);
     setSpinning(true);
     try {
       const [tRes, sRes] = await Promise.all([getThreats(), getThreatStats()]);
@@ -178,13 +115,23 @@ export default function ThreatMonitoring() {
         { name: 'Medium', value: s.medium || 0 },
         { name: 'High',   value: s.high   || 0 },
       ]);
-    } catch { toast.error('Failed to load threat data.'); }
-    finally { setLoading(false); setSpinning(false); }
-  }, []);
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Failed to load threat data.';
+      setError(errorMsg);
+      toast.error(errorMsg);
+    } finally {
+      setLoading(false);
+      setSpinning(false);
+    }
+  };
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!initializing) {
+      load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initializing]);
 
-  // ── Real-time socket threats ────────────────────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = data => {
@@ -201,15 +148,11 @@ export default function ThreatMonitoring() {
     return () => socket.off('threat_alert', handler);
   }, [socket]);
 
-  // ── KPI card click → set risk filter ───────────────────────
   const handleCardClick = (level) => {
     setRiskFilter(prev => prev === level ? 'All' : level);
   };
 
-  // ── Row click → open detail modal ──────────────────────────
   const openDetail = async (threat) => {
-    // If threat has no Firestore ID (e.g. live socket event before page refresh),
-    // show what we have without fetching.
     if (!threat.id) {
       setDetail({ threat, loginAttempts: null, relatedActivity: [], fileActivity: [] });
       setModalOpen(true);
@@ -235,154 +178,343 @@ export default function ThreatMonitoring() {
     setModalLoading(false);
   };
 
-  // ── Filtered table rows ─────────────────────────────────────
   const filtered = riskFilter === 'All'
     ? threats
     : threats.filter(t => t.risk_level === riskFilter);
 
-  // ── Render ──────────────────────────────────────────────────
   return (
-    <div style={s.wrapper}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-page)' }}>
       <Navbar />
-      <div style={s.body}>
+      <div style={{ display: 'flex', flex: 1 }}>
         <Sidebar />
-        <main style={s.main}>
-          <h1 style={s.heading}>Threat Monitoring</h1>
-          <p style={s.sub}>Live LSTM-powered threat detection. Click a card or row for full details.</p>
+        <main style={{ flex: 1, padding: '2.5rem', overflow: 'auto', maxWidth: '1800px', margin: '0 auto', width: '100%' }}>
+          {/* Page Header - Large readable title */}
+          <div style={{ marginBottom: '2.5rem' }}>
+            <h1 style={{ 
+              fontSize: '1.875rem',  // 30px - large page title
+              fontWeight: 800, 
+              color: 'var(--text-primary)', 
+              marginBottom: '0.625rem',
+              letterSpacing: '-0.02em'
+            }}>
+              Threat Monitoring Dashboard
+            </h1>
+            <p style={{ fontSize: 'var(--font-size-lg)', color: 'var(--text-secondary)' }}>
+              Real-time LSTM-powered threat detection and analysis
+            </p>
+          </div>
 
-          {/* ── Toolbar ── */}
-          <div style={s.toolbar}>
-            <FiFilter size={14} color="#475569" />
-            <select style={s.select} value={riskFilter} onChange={e => setRiskFilter(e.target.value)}>
+          {/* Toolbar - Large fonts */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+              <FiFilter size={18} color="var(--text-secondary)" />
+              <span style={{ fontSize: 'var(--font-size-base)', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Filter:
+              </span>
+            </div>
+            <select style={{
+              padding: '0.75rem 1.125rem',
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--text-primary)',
+              fontSize: 'var(--font-size-base)',  // 16px
+              fontWeight: 500,
+              outline: 'none',
+              cursor: 'pointer',
+              boxShadow: 'var(--shadow-sm)'
+            }} value={riskFilter} onChange={e => setRiskFilter(e.target.value)}>
               {['All', 'High', 'Medium', 'Low'].map(v => <option key={v}>{v}</option>)}
             </select>
             {riskFilter !== 'All' && (
               <button
                 onClick={() => setRiskFilter('All')}
-                style={{ ...s.refreshBtn, background: '#334155', marginLeft: 0 }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  padding: '0.75rem 1.125rem', background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)',
+                  color: 'var(--text-primary)', fontSize: 'var(--font-size-base)',
+                  fontWeight: 600, cursor: 'pointer', transition: 'var(--transition)',
+                  boxShadow: 'var(--shadow-sm)'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-primary)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
               >
-                <FiX size={13} /> Clear filter
+                <FiX size={16} /> Clear filter
               </button>
             )}
-            <button style={s.refreshBtn} onClick={load} disabled={spinning}>
-              <FiRefreshCw size={14} style={spinning ? { animation: 'spin 1s linear infinite' } : {}} />
-              Refresh
+            <button
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                padding: '0.75rem 1.25rem', background: 'var(--primary)',
+                border: 'none', borderRadius: 'var(--radius-md)',
+                color: 'var(--text-white)', fontSize: 'var(--font-size-base)',
+                fontWeight: 600, cursor: 'pointer', marginLeft: 'auto',
+                transition: 'var(--transition)', boxShadow: 'var(--shadow-md)'
+              }}
+              onClick={load}
+              disabled={spinning}
+              onMouseEnter={e => !spinning && (e.currentTarget.style.transform = 'translateY(-1px)')}
+              onMouseLeave={e => e.currentTarget.style.transform = 'none'}
+            >
+              <FiRefreshCw size={16} style={spinning ? { animation: 'spin 1s linear infinite' } : {}} />
+              Refresh Data
             </button>
           </div>
 
-          {/* ── KPI cards — each is clickable to filter ── */}
-          <div style={s.cards}>
+          {/* KPI Cards - Clickable filters */}
+          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '2.5rem' }}>
             <ClickCard
               title="Total Threats" value={stats.total}
-              icon={<FiAlertTriangle />} color="#38bdf8"
+              icon={<FiAlertTriangle />} color="var(--info)"
               active={riskFilter === 'All'}
               onClick={() => setRiskFilter('All')}
             />
             <ClickCard
               title="High Risk" value={stats.high}
-              icon={<FiAlertTriangle />} color="#ef4444"
+              icon={<FiAlertTriangle />} color="var(--danger)"
               active={riskFilter === 'High'}
               onClick={() => handleCardClick('High')}
             />
             <ClickCard
               title="Medium Risk" value={stats.medium}
-              icon={<FiAlertTriangle />} color="#f59e0b"
+              icon={<FiAlertTriangle />} color="var(--warning)"
               active={riskFilter === 'Medium'}
               onClick={() => handleCardClick('Medium')}
             />
             <ClickCard
               title="Low Risk" value={stats.low}
-              icon={<FiAlertTriangle />} color="#22c55e"
+              icon={<FiAlertTriangle />} color="var(--success)"
               active={riskFilter === 'Low'}
               onClick={() => handleCardClick('Low')}
             />
           </div>
 
-          {/* ── Charts ── */}
-          <div style={{ marginBottom: '24px' }}>
+          {/* Charts - Professional SOC dashboard appearance */}
+          <div style={{ marginBottom: '2.5rem' }}>
             <ThreatAreaChart data={timeline} />
           </div>
-          <div style={s.grid2}>
+          
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', 
+            gap: '1.5rem', 
+            marginBottom: '2.5rem' 
+          }}>
             <AttackCategoryBar data={catData} />
-            <RiskLevelPie      data={riskData} />
+            <RiskLevelPie data={riskData} />
           </div>
 
-          {/* ── Detection log table ── */}
-          <p style={s.section}>
-            Detection Log ({filtered.length})
-            {riskFilter !== 'All' && (
-              <span style={{ marginLeft: '8px', fontSize: '12px', color: RISK_COLORS[riskFilter], fontWeight: 400 }}>
-                — filtered: {riskFilter} risk
+          {/* Detection Log - Large readable table */}
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ 
+              fontSize: '1.25rem',  // 20px
+              fontWeight: 700, 
+              color: 'var(--text-primary)',
+              marginBottom: '0.25rem',
+              letterSpacing: '-0.01em'
+            }}>
+              Detection Log
+              <span style={{ 
+                marginLeft: '0.75rem', 
+                fontSize: 'var(--font-size-base)', 
+                fontWeight: 600,
+                color: 'var(--text-secondary)' 
+              }}>
+                ({filtered.length} {filtered.length === 1 ? 'record' : 'records'})
               </span>
-            )}
-          </p>
-          <div style={s.tableWrap}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead style={{ background: '#0f172a' }}>
-                <tr>
-                  {['User', 'Attack Type', 'Risk Level', 'Confidence', 'Source IP', 'Timestamp'].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={6} style={{ ...s.td, textAlign: 'center' }}>Loading…</td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={6} style={{ ...s.td, textAlign: 'center', color: '#475569' }}>
-                    No threats found{riskFilter !== 'All' ? ` for ${riskFilter} risk` : ''}.
-                  </td></tr>
-                ) : filtered.slice(0, 100).map((t, i) => (
-                  <tr
-                    key={t.id || i}
-                    onClick={() => openDetail(t)}
-                    style={{ cursor: 'pointer', transition: 'background 0.12s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#0f172a'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    title="Click for full threat details"
-                  >
-                    <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '12px' }}>
-                      {t.user_email || '—'}
-                    </td>
-                    <td style={s.td}>{t.attack_type || '—'}</td>
-                    <td style={s.td}>
-                      <span style={{ color: RISK_COLORS[t.risk_level] || '#94a3b8', fontWeight: 600 }}>
-                        {t.risk_level || '—'}
-                      </span>
-                    </td>
-                    <td style={s.td}>{t.confidence_score != null ? `${t.confidence_score}%` : '—'}</td>
-                    <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '12px' }}>{t.source_ip || '—'}</td>
-                    <td style={s.td}>{t.timestamp ? new Date(t.timestamp).toLocaleString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length > 100 && (
-              <p style={{ padding: '10px 14px', fontSize: '12px', color: '#475569', borderTop: '1px solid #1e293b' }}>
-                Showing first 100 of {filtered.length}. Use the risk filter to narrow results.
+            </h2>
+            {riskFilter !== 'All' && (
+              <p style={{ 
+                fontSize: 'var(--font-size-base)', 
+                color: RISK_COLORS[riskFilter],
+                fontWeight: 600,
+                marginTop: '0.25rem'
+              }}>
+                Filtered by {riskFilter} risk level
               </p>
+            )}
+          </div>
+
+          <div style={{
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-md)'
+          }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+                <thead style={{ background: 'var(--bg-secondary)' }}>
+                  <tr>
+                    {['User', 'Attack Type', 'Risk Level', 'Confidence', 'Source IP', 'Timestamp'].map(h => (
+                      <th key={h} style={{
+                        padding: '1rem 1.25rem',
+                        fontSize: '0.9375rem',  // 15px
+                        fontWeight: 700,
+                        color: 'var(--text-secondary)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        textAlign: 'left',
+                        borderBottom: '2px solid var(--border-color)'
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={6} style={{ 
+                      padding: '3rem', 
+                      textAlign: 'center', 
+                      color: 'var(--text-secondary)', 
+                      fontSize: 'var(--font-size-lg)' 
+                    }}>
+                      <FiRefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: '0.75rem', display: 'block', margin: '0 auto 0.75rem' }} />
+                      Loading threat data...
+                    </td></tr>
+                  ) : error ? (
+                    <tr><td colSpan={6} style={{ 
+                      padding: '3rem', 
+                      textAlign: 'center', 
+                      color: 'var(--danger)', 
+                      fontSize: 'var(--font-size-base)' 
+                    }}>
+                      <FiAlertTriangle size={24} style={{ marginBottom: '0.75rem', display: 'block', margin: '0 auto 0.75rem' }} />
+                      {error}
+                    </td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr><td colSpan={6} style={{ 
+                      padding: '3rem', 
+                      textAlign: 'center', 
+                      color: 'var(--text-muted)', 
+                      fontSize: 'var(--font-size-base)' 
+                    }}>
+                      <FiShield size={32} style={{ opacity: 0.3, marginBottom: '0.75rem', display: 'block', margin: '0 auto 0.75rem' }} />
+                      {riskFilter !== 'All' 
+                        ? `No ${riskFilter} risk threats detected.` 
+                        : 'No threats detected. Your system is secure.'}
+                    </td></tr>
+                  ) : filtered.slice(0, 100).map((t, i) => (
+                    <tr
+                      key={t.id || i}
+                      onClick={() => openDetail(t)}
+                      style={{ 
+                        cursor: 'pointer', 
+                        borderBottom: '1px solid var(--border-color)', 
+                        transition: 'var(--transition)' 
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                      title="Click for detailed threat analysis"
+                    >
+                      <td style={{ 
+                        padding: '1rem 1.25rem', 
+                        fontFamily: 'monospace', 
+                        fontSize: '0.9375rem',  // 15px
+                        color: 'var(--text-primary)',
+                        fontWeight: 500
+                      }}>
+                        {t.user_email || '—'}
+                      </td>
+                      <td style={{ 
+                        padding: '1rem 1.25rem', 
+                        fontSize: 'var(--font-size-base)',  // 16px
+                        color: 'var(--text-secondary)',
+                        fontWeight: 500
+                      }}>
+                        {t.attack_type || '—'}
+                      </td>
+                      <td style={{ padding: '1rem 1.25rem' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '0.375rem 0.875rem',
+                          borderRadius: '999px',
+                          fontSize: '0.875rem',  // 14px
+                          fontWeight: 700,
+                          background: RISK_BG[t.risk_level] || 'var(--bg-secondary)',
+                          color: RISK_COLORS[t.risk_level] || 'var(--text-primary)'
+                        }}>
+                          {t.risk_level || '—'}
+                        </span>
+                      </td>
+                      <td style={{ 
+                        padding: '1rem 1.25rem', 
+                        fontSize: 'var(--font-size-base)',  // 16px
+                        color: 'var(--text-secondary)',
+                        fontWeight: 600
+                      }}>
+                        {t.confidence_score != null ? `${t.confidence_score}%` : '—'}
+                      </td>
+                      <td style={{ 
+                        padding: '1rem 1.25rem', 
+                        fontFamily: 'monospace', 
+                        fontSize: '0.9375rem',  // 15px
+                        color: 'var(--text-secondary)' 
+                      }}>
+                        {t.source_ip || '—'}
+                      </td>
+                      <td style={{ 
+                        padding: '1rem 1.25rem', 
+                        fontSize: '0.9375rem',  // 15px
+                        color: 'var(--text-secondary)' 
+                      }}>
+                        {t.timestamp ? new Date(t.timestamp).toLocaleString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        }) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {filtered.length > 100 && (
+              <div style={{ 
+                padding: '1rem 1.25rem', 
+                fontSize: 'var(--font-size-base)', 
+                color: 'var(--text-muted)', 
+                borderTop: '1px solid var(--border-color)',
+                background: 'var(--bg-secondary)'
+              }}>
+                <FiInfo size={16} style={{ display: 'inline', marginRight: '0.5rem', verticalAlign: 'middle' }} />
+                Showing first 100 of {filtered.length} records. Use the risk filter to narrow results.
+              </div>
             )}
           </div>
         </main>
       </div>
 
-      {/* ════════════════════════════════════════════════════
-          THREAT DETAIL MODAL
-          ════════════════════════════════════════════════════ */}
+      {/* THREAT DETAIL MODAL */}
       {modalOpen && (
-        <div style={s.overlay} onClick={closeModal}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 2000, padding: '20px',
+        }} onClick={closeModal}>
+          <div style={{
+            background: 'var(--bg-primary)', border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: '950px',
+            maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+            overflow: 'hidden', boxShadow: 'var(--shadow-xl)'
+          }} onClick={e => e.stopPropagation()}>
 
             {/* Header */}
-            <div style={s.mHead}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <FiShield size={20} color="#ef4444" />
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '1.5rem 2rem', borderBottom: '1px solid var(--border-color)',
+              background: 'var(--bg-secondary)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <FiShield size={24} color="var(--danger)" />
                 <div>
-                  <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#f1f5f9', margin: 0 }}>
-                    Threat Detail
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    Threat Analysis Detail
                   </h2>
                   {detail?.threat && (
-                    <p style={{ fontSize: '12px', color: '#64748b', margin: 0 }}>
+                    <p style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)', margin: 0 }}>
                       {detail.threat.attack_type} — {detail.threat.user_email}
                     </p>
                   )}
@@ -390,18 +522,26 @@ export default function ThreatMonitoring() {
               </div>
               <button
                 onClick={closeModal}
-                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '4px' }}
+                style={{ 
+                  background: 'none', 
+                  border: 'none', 
+                  color: 'var(--text-muted)', 
+                  cursor: 'pointer', 
+                  padding: '0.25rem',
+                  fontSize: '1.5rem',
+                  lineHeight: 1
+                }}
               >
-                <FiX size={20} />
+                <FiX size={24} />
               </button>
             </div>
 
             {/* Body */}
-            <div style={s.mBody}>
+            <div style={{ padding: '2rem', overflow: 'auto', flex: 1 }}>
               {modalLoading ? (
-                <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>
-                  <FiRefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: '12px' }} />
-                  <p>Loading threat details from Firestore…</p>
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                  <FiRefreshCw size={28} style={{ animation: 'spin 1s linear infinite', marginBottom: '1rem' }} />
+                  <p style={{ fontSize: 'var(--font-size-lg)' }}>Loading detailed threat analysis…</p>
                 </div>
               ) : detail ? (
                 <ThreatDetailBody detail={detail} />
@@ -409,116 +549,159 @@ export default function ThreatMonitoring() {
             </div>
 
             {/* Footer */}
-            <div style={s.mFoot}>
-              <button style={s.closeBtn} onClick={closeModal}>Close</button>
+            <div style={{
+              padding: '1rem 2rem', borderTop: '1px solid var(--border-color)',
+              background: 'var(--bg-secondary)', display: 'flex', justifyContent: 'flex-end'
+            }}>
+              <button style={{
+                background: 'var(--primary)', border: 'none',
+                borderRadius: 'var(--radius-md)', color: 'var(--text-white)',
+                padding: '0.75rem 1.75rem', fontSize: 'var(--font-size-base)',
+                fontWeight: 600, cursor: 'pointer', transition: 'var(--transition)',
+                boxShadow: 'var(--shadow-sm)'
+              }} onClick={closeModal}>Close</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Spin keyframe — injected once */}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
 
-// ─── Detail body rendered inside the modal ───────────────────
 function ThreatDetailBody({ detail }) {
-  const { threat, loginAttempts, relatedActivity, fileActivity } = detail;
-  const riskColor = RISK_COLORS[threat.risk_level] || '#94a3b8';
-  const riskBg    = RISK_BG[threat.risk_level]    || '#1e293b';
+  const { threat, loginAttempts, relatedActivity } = detail;
+  const riskColor = RISK_COLORS[threat.risk_level] || 'var(--text-secondary)';
+  const riskBg    = RISK_BG[threat.risk_level]    || 'var(--bg-secondary)';
+
+  const infoCardStyle = {
+    background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+    borderRadius: 'var(--radius-md)', padding: '1.25rem 1.5rem'
+  };
 
   return (
     <>
-      {/* ── Row 1: identity + risk ── */}
-      <div style={s.row2}>
-        <InfoCard icon={<FiUser size={13} color="#38bdf8" />} label="User Email" value={threat.user_email || '—'} mono />
-        <InfoCard icon={<FiShield size={13} color={riskColor} />} label="Risk Level">
-          <span style={s.badge(riskBg, riskColor)}>{threat.risk_level || '—'}</span>
-        </InfoCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={infoCardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                        fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                        letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+            <FiUser size={14} color="var(--info)" />
+            User Email
+          </div>
+          <div style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500, fontFamily: 'monospace' }}>
+            {threat.user_email || '—'}
+          </div>
+        </div>
+        <div style={infoCardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                        fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                        letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+            <FiShield size={14} color={riskColor} />
+            Risk Level
+          </div>
+          <span style={{
+            display: 'inline-block', padding: '0.5rem 1.125rem', borderRadius: '999px',
+            fontSize: 'var(--font-size-base)', fontWeight: 700,
+            background: riskBg, color: riskColor
+          }}>{threat.risk_level || '—'}</span>
+        </div>
       </div>
 
-      {/* ── Row 2: attack + confidence ── */}
-      <div style={s.row2}>
-        <InfoCard icon={<FiAlertTriangle size={13} color="#f59e0b" />} label="Attack / Threat Type" value={threat.attack_type || '—'} />
-        <InfoCard icon={<FiActivity size={13} color="#a78bfa" />} label="ML Confidence Score" value={threat.confidence_score != null ? `${threat.confidence_score}%` : '—'} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={infoCardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                        fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                        letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+            <FiAlertTriangle size={14} color="var(--warning)" />
+            Attack Type
+          </div>
+          <div style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500 }}>
+            {threat.attack_type || '—'}
+          </div>
+        </div>
+        <div style={infoCardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                        fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                        letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+            <FiActivity size={14} color="var(--purple)" />
+            ML Confidence Score
+          </div>
+          <div style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 600 }}>
+            {threat.confidence_score != null ? `${threat.confidence_score}%` : '—'}
+          </div>
+        </div>
       </div>
 
-      {/* ── Row 3: IP + timestamp ── */}
-      <div style={s.row2}>
-        <InfoCard icon={<FiInfo size={13} color="#60a5fa" />} label="Source IP Address" value={threat.source_ip || '—'} mono />
-        <InfoCard icon={<FiClock size={13} color="#34d399" />} label="Detection Timestamp"
-          value={threat.timestamp ? new Date(threat.timestamp).toLocaleString() : '—'} />
-      </div>
-
-      {/* ── Row 4: logins ── */}
       {loginAttempts && (
-        <div style={s.row2}>
-          <InfoCard icon={<FiLogIn size={13} color="#4ade80" />} label="Successful Logins (all time)" value={String(loginAttempts.successful)} />
-          <InfoCard icon={<FiLogIn size={13} color="#f87171" />} label="Failed Login Attempts" value={String(loginAttempts.failed)} />
-        </div>
-      )}
-
-      {/* ── Last login time ── */}
-      {loginAttempts?.lastLogin && (
-        <div style={{ marginBottom: '16px' }}>
-          <InfoCard icon={<FiClock size={13} color="#94a3b8" />} label="Last Login Before This Threat"
-            value={new Date(loginAttempts.lastLogin).toLocaleString()} />
-        </div>
-      )}
-
-      {/* ── Suspicious activity that caused the threat (related activity) ── */}
-      <div style={s.sectionHead}>
-        <FiAlertCircle size={13} />
-        Suspicious / Related Activity (±30 min window)
-        <span style={{ fontWeight: 400, color: '#475569', marginLeft: '4px' }}>
-          {relatedActivity?.length || 0} events
-        </span>
-      </div>
-      {(!relatedActivity || relatedActivity.length === 0) ? (
-        <p style={{ color: '#475569', fontSize: '12px', marginBottom: '16px' }}>
-          No correlated activity found in the ±30-minute window.
-        </p>
-      ) : (
-        <div style={{ ...s.infoCard, padding: '8px 12px', marginBottom: '16px', maxHeight: '180px', overflowY: 'auto' }}>
-          {relatedActivity.map((a, i) => (
-            <div key={a.id || i} style={s.actRow}>
-              <span style={{ marginTop: '1px' }}>{EVENT_ICONS[a.event_type] || <FiActivity size={12} color="#94a3b8" />}</span>
-              <div style={{ flex: 1 }}>
-                <span style={{ color: '#e2e8f0', fontWeight: 500 }}>
-                  {a.event_type?.replace(/_/g, ' ').toUpperCase() || 'EVENT'}
-                </span>
-                {a.details && <span style={{ color: '#64748b', marginLeft: '8px' }}>{a.details}</span>}
-              </div>
-              <span style={{ color: '#475569', whiteSpace: 'nowrap', fontSize: '11px' }}>
-                {a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── File activity ── */}
-      {fileActivity?.length > 0 && (
         <>
-          <div style={s.sectionHead}>
-            <FiFolder size={13} />
-            File Activity Related to This Threat
-            <span style={{ fontWeight: 400, color: '#475569', marginLeft: '4px' }}>
-              {fileActivity.length} events
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.25rem' }}>
+            <div style={infoCardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                            fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                            letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+                <FiLogIn size={14} color="var(--success)" />
+                Successful Logins (All Time)
+              </div>
+              <div style={{ fontSize: 'var(--font-size-lg)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                {String(loginAttempts.successful)}
+              </div>
+            </div>
+            <div style={infoCardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                            fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                            letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+                <FiLogIn size={14} color="var(--danger)" />
+                Failed Login Attempts
+              </div>
+              <div style={{ fontSize: 'var(--font-size-lg)', color: 'var(--danger)', fontWeight: 600 }}>
+                {String(loginAttempts.failed)}
+              </div>
+            </div>
+          </div>
+          {loginAttempts?.lastLogin && (
+            <div style={{ ...infoCardStyle, marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+                            fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase',
+                            letterSpacing: '0.08em', marginBottom: '0.625rem' }}>
+                <FiClock size={14} color="var(--text-muted)" />
+                Last Login Before This Threat
+              </div>
+              <div style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500 }}>
+                {new Date(loginAttempts.lastLogin).toLocaleString()}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {relatedActivity && relatedActivity.length > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', fontSize: 'var(--font-size-base)',
+                        fontWeight: 700, color: 'var(--text-primary)',
+                        marginTop: '2rem', marginBottom: '1rem' }}>
+            <FiAlertCircle size={16} />
+            Related Activity (±30 min window)
+            <span style={{ fontWeight: 500, color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+              {relatedActivity.length} events
             </span>
           </div>
-          <div style={{ ...s.infoCard, padding: '8px 12px', marginBottom: '16px', maxHeight: '140px', overflowY: 'auto' }}>
-            {fileActivity.map((a, i) => (
-              <div key={a.id || i} style={s.actRow}>
-                <span style={{ marginTop: '1px' }}>{EVENT_ICONS[a.event_type] || <FiFolder size={12} />}</span>
+          <div style={{ ...infoCardStyle, padding: '0.75rem', maxHeight: '220px', overflowY: 'auto' }}>
+            {relatedActivity.map((a, i) => (
+              <div key={a.id || i} style={{
+                display: 'flex', alignItems: 'flex-start', gap: '0.875rem',
+                padding: '0.75rem', borderBottom: i < relatedActivity.length - 1 ? '1px solid var(--border-color)' : 'none',
+                fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)'
+              }}>
+                <span style={{ marginTop: '2px' }}>{EVENT_ICONS[a.event_type] || <FiActivity size={14} />}</span>
                 <div style={{ flex: 1 }}>
-                  <span style={{ color: '#e2e8f0', fontWeight: 500 }}>
-                    {a.event_type?.replace(/_/g, ' ').toUpperCase()}
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+                    {a.event_type?.replace(/_/g, ' ').toUpperCase() || 'EVENT'}
                   </span>
-                  {a.details && <span style={{ color: '#64748b', marginLeft: '8px' }}>{a.details}</span>}
+                  {a.details && <span style={{ color: 'var(--text-secondary)', marginLeft: '0.625rem' }}>{a.details}</span>}
                 </div>
-                <span style={{ color: '#475569', whiteSpace: 'nowrap', fontSize: '11px' }}>
+                <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: '0.875rem' }}>
                   {a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}
                 </span>
               </div>
@@ -527,36 +710,19 @@ function ThreatDetailBody({ detail }) {
         </>
       )}
 
-      {/* ── Raw ML input features ── */}
       {threat.raw_input && Object.keys(threat.raw_input).length > 0 && (
         <>
-          <div style={s.sectionHead}>
-            <FiInfo size={13} />
-            Raw ML Input Features (what triggered the LSTM)
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', fontSize: 'var(--font-size-base)',
+                        fontWeight: 700, color: 'var(--text-primary)',
+                        marginTop: '2rem', marginBottom: '1rem' }}>
+            <FiInfo size={16} />
+            Raw ML Input Features (LSTM Inputs)
           </div>
-          <div style={{ ...s.infoCard, marginBottom: '8px' }}>
+          <div style={infoCardStyle}>
             <RawInputTable data={threat.raw_input} />
           </div>
         </>
       )}
     </>
-  );
-}
-
-// ─── Small info card used inside the modal ───────────────────
-function InfoCard({ icon, label, value, mono, children }) {
-  return (
-    <div style={s.infoCard}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', ...{ ...s.infoLabel } }}>
-        {icon}
-        {label}
-      </div>
-      {children
-        ? <div style={{ marginTop: '4px' }}>{children}</div>
-        : <div style={{ ...s.infoValue, fontFamily: mono ? 'monospace' : 'inherit', fontSize: mono ? '12px' : '14px' }}>
-            {value || '—'}
-          </div>
-      }
-    </div>
   );
 }

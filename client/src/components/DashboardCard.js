@@ -1,89 +1,108 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 /**
- * DashboardCard
- * A reusable metric card for dashboards.
- *
- * Props:
- *   title    {string}  — Card label
- *   value    {string|number} — Main displayed value
- *   icon     {ReactNode}    — Icon element
- *   color    {string}  — Accent colour (hex / CSS colour)
- *   subtitle {string}  — Optional small text below value
- *   trend    {string}  — Optional trend label e.g. "+12% today"
+ * DashboardCard - professional light theme with white cards
+ * FIXED: 16px+ font sizes, white background, proper shadows
  */
-function DashboardCard({ title, value, icon, color = '#38bdf8', subtitle, trend }) {
-  const styles = {
-    card: {
-      background: '#1e293b',
-      border: `1px solid #334155`,
-      borderRadius: '12px',
-      padding: '20px 24px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px',
-      minWidth: '180px',
-      flex: '1',
-      position: 'relative',
-      overflow: 'hidden',
-    },
-    accent: {
-      position: 'absolute',
-      top: 0, left: 0,
-      width: '4px',
-      height: '100%',
-      background: color,
-      borderRadius: '12px 0 0 12px',
-    },
-    header: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    title: {
-      fontSize: '12px',
-      fontWeight: 600,
-      color: '#64748b',
-      textTransform: 'uppercase',
-      letterSpacing: '0.08em',
-    },
-    iconWrap: {
-      width: '36px', height: '36px',
-      borderRadius: '8px',
-      background: `${color}22`,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color,
-      fontSize: '18px',
-    },
-    value: {
-      fontSize: '30px',
-      fontWeight: 700,
-      color: '#f1f5f9',
-      lineHeight: 1,
-    },
-    subtitle: {
-      fontSize: '12px',
-      color: '#64748b',
-    },
-    trend: {
-      fontSize: '11px',
-      color: color,
-      fontWeight: 600,
-    },
-  };
+
+function DashboardCard({ title, value, icon, color = 'var(--primary)', subtitle, trend, onClick }) {
+  const [hovered, setHovered] = useState(false);
 
   return (
-    <div style={styles.card}>
-      <div style={styles.accent} />
-      <div style={styles.header}>
-        <span style={styles.title}>{title}</span>
-        {icon && <span style={styles.iconWrap}>{icon}</span>}
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: 'var(--bg-primary)', // white
+        border: `1px solid ${hovered ? color + '40' : 'var(--border-color)'}`,
+        borderRadius: 'var(--radius-lg)',
+        padding: '1.75rem 2rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1rem',
+        minWidth: '220px',
+        flex: '1',
+        position: 'relative',
+        overflow: 'hidden',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'var(--transition)',
+        transform: hovered && onClick ? 'translateY(-2px)' : 'none',
+        boxShadow: hovered ? 'var(--shadow-lg)' : 'var(--shadow-md)',
+      }}
+    >
+      {/* Top accent bar */}
+      <div style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0,
+        height: '4px',
+        background: color,
+        borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+      }} />
+
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{
+          fontSize: 'var(--font-size-sm)',
+          fontWeight: 700,
+          color: 'var(--text-secondary)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+        }}>{title}</span>
+
+        {icon && (
+          <span style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: 'var(--radius-md)',
+            background: `${color}15`,
+            border: `1px solid ${color}30`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color,
+            fontSize: '20px',
+          }}>
+            {icon}
+          </span>
+        )}
       </div>
-      <div style={styles.value}>{value ?? '—'}</div>
-      {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
-      {trend   && <div style={styles.trend}>{trend}</div>}
+
+      {/* Value */}
+      <div style={{
+        fontSize: 'var(--font-size-4xl)',
+        fontWeight: 800,
+        color: 'var(--text-primary)',
+        lineHeight: 1,
+        letterSpacing: '-0.02em',
+      }}>
+        {value ?? '—'}
+      </div>
+
+      {/* Subtitle */}
+      {subtitle && (
+        <div style={{
+          fontSize: 'var(--font-size-base)',
+          color: 'var(--text-secondary)',
+          fontWeight: 500
+        }}>
+          {subtitle}
+        </div>
+      )}
+
+      {/* Trend */}
+      {trend && (
+        <div style={{
+          fontSize: 'var(--font-size-base)',
+          color,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.375rem',
+        }}>
+          {trend}
+        </div>
+      )}
     </div>
   );
 }

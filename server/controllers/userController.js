@@ -22,6 +22,8 @@ const {
   COLLECTIONS,
 } = require('../config/firebase');
 
+const { getClientIp } = require('../utils/ipExtractor');
+
 // ─────────────────────────────────────────────────────────────
 // GET ALL USERS  (admin only)
 // GET /api/users
@@ -59,12 +61,13 @@ async function deleteUser(req, res) {
     // After deletion the user cannot log in because findUserByEmail() will return null.
     await deleteUserById(id);
 
+    const clientIp = getClientIp(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'user_deleted',
       details:    `Admin deleted user: ${target.email}`,
-      ip_address: req.ip,
+      ip_address: clientIp,
     });
 
     return res.json({ message: 'User deleted successfully.' });
@@ -94,12 +97,13 @@ async function updateRole(req, res) {
     // and embedded in the JWT, so the change takes effect on next login.
     await updateUser(id, { role });
 
+    const clientIp = getClientIp(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'role_changed',
       details:    `Changed role of ${target.email} from "${target.role}" to "${role}"`,
-      ip_address: req.ip,
+      ip_address: clientIp,
     });
 
     return res.json({ message: `Role updated to "${role}".` });

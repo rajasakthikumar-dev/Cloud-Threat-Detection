@@ -47,6 +47,25 @@ const { emitThreatAlert } = initSocket(server);
 app.set('emitThreatAlert', emitThreatAlert);
 
 // ─────────────────────────────────────────────────────────────
+// TRUST PROXY CONFIGURATION
+// ─────────────────────────────────────────────────────────────
+// CRITICAL for production deployment behind reverse proxies (Render, Heroku, AWS, etc.)
+// This tells Express to trust X-Forwarded-* headers from the first proxy hop.
+// 
+// Setting: trust proxy = 1
+// - Trusts the first proxy in the chain (the deployment platform's load balancer)
+// - Allows req.ip to correctly resolve the real client IP from X-Forwarded-For
+// - Does NOT blindly trust arbitrary client-supplied headers
+// 
+// Without this setting:
+// - req.ip returns 127.0.0.1 (the proxy's internal IP)
+// - Activity logs show 127.0.0.1 instead of the real client IP
+// 
+// Security note: Only enable when deployed behind a trusted reverse proxy.
+// For untrusted environments, use 'trust proxy' = false (default).
+app.set('trust proxy', 1);
+
+// ─────────────────────────────────────────────────────────────
 // GLOBAL MIDDLEWARE
 // ─────────────────────────────────────────────────────────────
 

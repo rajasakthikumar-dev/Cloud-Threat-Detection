@@ -29,6 +29,8 @@ const {
   COLLECTIONS,
 } = require('../config/firebase');
 
+const { getClientIp } = require('../utils/ipExtractor');
+
 // ─────────────────────────────────────────────────────────────
 // UPLOAD
 // POST /api/files/upload
@@ -59,12 +61,13 @@ async function uploadFile(req, res) {
     });
 
     // Log the event
+    const clientIp = getClientIp(req);
     await logActivity({
       userId,
       userEmail,
       event_type: 'file_upload',
       details:    `Uploaded "${originalname}" (${(size / 1024).toFixed(1)} KB) to S3`,
-      ip_address: req.ip,
+      ip_address: clientIp,
       metadata:   { key, size },
     });
 
@@ -227,12 +230,13 @@ async function downloadFile(req, res) {
     // Generate a 15-minute pre-signed download URL with attachment disposition
     const url = await getDownloadUrl(key, 900, 'attachment', fileDoc.name);
 
+    const clientIp = getClientIp(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'file_download',
       details:    `Download link generated for "${fileDoc.name}"`,
-      ip_address: req.ip,
+      ip_address: clientIp,
       metadata:   { key, size: fileDoc.size },
     });
 
@@ -270,12 +274,13 @@ async function deleteFile(req, res) {
     await deleteFromS3(key);
     await deleteFileMetadata(key);
 
+    const clientIp = getClientIp(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'file_delete',
       details:    `Deleted file "${fileDoc.name}" (key: ${key})`,
-      ip_address: req.ip,
+      ip_address: clientIp,
       metadata:   { key, name: fileDoc.name },
     });
 
