@@ -272,7 +272,7 @@ export default function ActivityLogs() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead style={{ background: 'var(--bg-secondary)' }}>
                   <tr>
-                    {['Event', 'User', 'Details', 'IP Address', 'Timestamp'].map(h => (
+                    {['Event', 'User', 'Details', 'Device Info', 'IP Address', 'Timestamp'].map(h => (
                       <th key={h} style={{ 
                         padding: '0.875rem 1rem', 
                         fontSize: 'var(--font-size-sm)', 
@@ -291,7 +291,7 @@ export default function ActivityLogs() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={5} style={{ 
+                      <td colSpan={6} style={{ 
                         padding: '2rem', 
                         textAlign: 'center', 
                         color: 'var(--text-secondary)', 
@@ -302,7 +302,7 @@ export default function ActivityLogs() {
                     </tr>
                   ) : error ? (
                     <tr>
-                      <td colSpan={5} style={{ 
+                      <td colSpan={6} style={{ 
                         padding: '2rem', 
                         textAlign: 'center', 
                         color: 'var(--danger)', 
@@ -313,7 +313,7 @@ export default function ActivityLogs() {
                     </tr>
                   ) : filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ 
+                      <td colSpan={6} style={{ 
                         padding: '2rem', 
                         textAlign: 'center', 
                         color: 'var(--text-muted)', 
@@ -347,6 +347,38 @@ export default function ActivityLogs() {
                           color: 'var(--text-secondary)' 
                         }}>
                           {l.details || '—'}
+                        </td>
+                        <td style={{ 
+                          padding: '0.875rem 1rem', 
+                          fontSize: 'var(--font-size-sm)', 
+                          color: 'var(--text-primary)' 
+                        }}>
+                          {l.device || l.os || l.browser ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {l.device && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <span style={{ 
+                                    display: 'inline-block', 
+                                    width: '6px', 
+                                    height: '6px', 
+                                    borderRadius: '50%', 
+                                    background: 'var(--info)' 
+                                  }}></span>
+                                  <span style={{ fontWeight: 600 }}>{l.device}</span>
+                                </div>
+                              )}
+                              {l.os && (
+                                <div style={{ paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                  {l.os}
+                                </div>
+                              )}
+                              {l.browser && (
+                                <div style={{ paddingLeft: '1rem', color: 'var(--text-secondary)' }}>
+                                  {l.browser}
+                                </div>
+                              )}
+                            </div>
+                          ) : '—'}
                         </td>
                         <td style={{ 
                           padding: '0.875rem 1rem', 

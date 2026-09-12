@@ -107,9 +107,24 @@ const COLLECTIONS = {
  * @param {string} params.event_type  — e.g. 'login', 'file_upload', 'threat_detected'
  * @param {string} [params.details]   — human-readable description
  * @param {string} [params.ip_address]
+ * @param {string} [params.device]    — Device type (Desktop, Mobile, iPhone, etc.)
+ * @param {string} [params.os]        — Operating system (Windows 10/11, Ubuntu, iOS, etc.)
+ * @param {string} [params.browser]   — Browser name and version (Chrome 120, Firefox 121, etc.)
+ * @param {string} [params.user_agent] — Raw User-Agent string
  * @param {object} [params.metadata]  — arbitrary extra data
  */
-async function logActivity({ userId, userEmail, event_type, details = '', ip_address = '', metadata = {} }) {
+async function logActivity({ 
+  userId, 
+  userEmail, 
+  event_type, 
+  details = '', 
+  ip_address = '', 
+  device = '', 
+  os = '', 
+  browser = '', 
+  user_agent = '',
+  metadata = {} 
+}) {
   try {
     await db.collection(COLLECTIONS.ACTIVITY_LOGS).add({
       userId,
@@ -117,6 +132,10 @@ async function logActivity({ userId, userEmail, event_type, details = '', ip_add
       event_type,
       details,
       ip_address,
+      device,
+      os,
+      browser,
+      user_agent,
       metadata,
       timestamp:   admin.firestore.FieldValue.serverTimestamp(),
     });

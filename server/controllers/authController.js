@@ -15,7 +15,7 @@ const {
   logActivity,
 } = require('../config/firebase');
 
-const { getClientIp } = require('../utils/ipExtractor');
+const { getClientInfo, formatClientInfo } = require('../utils/deviceParser');
 
 // ─────────────────────────────────────────────────────────────
 // REGISTER
@@ -57,14 +57,18 @@ async function register(req, res) {
       passwordHash,
     });
 
-    // Log the registration event
-    const clientIp = getClientIp(req);
+    // Log the registration event with device info
+    const clientInfo = getClientInfo(req);
     await logActivity({
       userId,
       userEmail:  email.toLowerCase(),
       event_type: 'user_created',
-      details:    `New user registered: ${name} (${role})`,
-      ip_address: clientIp,
+      details:    `New user registered: ${name} (${role}) from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device:     clientInfo.device,
+      os:         clientInfo.os,
+      browser:    clientInfo.browser,
+      user_agent: clientInfo.userAgent,
     });
 
     // Return token so the user can be immediately logged in from the frontend
@@ -101,15 +105,19 @@ async function login(req, res) {
     }
 
     // Verify password
-    const clientIp = getClientIp(req);
+    const clientInfo = getClientInfo(req);
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) {
       await logActivity({
         userId:     user.id,
         userEmail:  user.email,
         event_type: 'login_failed',
-        details:    'Incorrect password attempt',
-        ip_address: clientIp,
+        details:    `Incorrect password attempt from ${formatClientInfo(clientInfo)}`,
+        ip_address: clientInfo.ip,
+        device:     clientInfo.device,
+        os:         clientInfo.os,
+        browser:    clientInfo.browser,
+        user_agent: clientInfo.userAgent,
       });
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
@@ -117,13 +125,17 @@ async function login(req, res) {
     // Issue JWT
     const token = generateToken({ id: user.id, email: user.email, role: user.role });
 
-    // Log successful login
+    // Log successful login with device info
     await logActivity({
       userId:     user.id,
       userEmail:  user.email,
       event_type: 'login',
-      details:    `User logged in from ${clientIp}`,
-      ip_address: clientIp,
+      details:    `User logged in from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device:     clientInfo.device,
+      os:         clientInfo.os,
+      browser:    clientInfo.browser,
+      user_agent: clientInfo.userAgent,
     });
 
     return res.json({
@@ -147,13 +159,17 @@ async function login(req, res) {
 // Firestore activity_logs before the client clears its storage.
 async function logout(req, res) {
   try {
-    const clientIp = getClientIp(req);
+    const clientInfo = getClientInfo(req);
     await logActivity({
       userId:     req.user.id,
       userEmail:  req.user.email,
       event_type: 'logout',
-      details:    `User logged out (${req.user.role})`,
-      ip_address: clientIp,
+      details:    `User logged out (${req.user.role}) from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device:     clientInfo.device,
+      os:         clientInfo.os,
+      browser:    clientInfo.browser,
+      user_agent: clientInfo.userAgent,
     });
     return res.json({ message: 'Logged out successfully.' });
   } catch (err) {
