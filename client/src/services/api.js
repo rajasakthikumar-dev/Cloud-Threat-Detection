@@ -65,20 +65,48 @@ api.interceptors.request.use(
 );
 
 // ── Response interceptor ────────────────────────────────────
-// CRITICAL FIX: On 401, clear session-specific auth state
+// Handles both 401 (expired/invalid token) and 403 (account restricted).
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Clear THIS session's auth data
+    const status = error.response?.status;
+    const data   = error.response?.data;
+
+    // ── 401: token invalid or expired ───────────────────────
+    if (status === 401) {
+      // Clear THIS session's auth data only
       localStorage.removeItem(getTokenKey());
       localStorage.removeItem(getUserKey());
-      
-      // Don't redirect if we're already on the login page
+
       if (!window.location.pathname.includes('/login')) {
         window.location.href = '/login';
       }
     }
+
+    // ── 403 ACCOUNT_RESTRICTED: account temporarily blocked ─
+    // Redirect to the /restricted page so the user sees a clear
+    // explanation instead of a silent API failure.
+    // We do NOT clear the token — the user's identity is still
+    // valid; only their access is suspended.
+    if (status === 403 && data?.code === 'ACCOUNT_RESTRICTED') {
+      // Store the restriction details so the RestrictedPage can display them
+      try {
+        sessionStorage.setItem(
+          'restriction_info',
+          JSON.stringify({
+            message:           data.message           || 'Your account is temporarily restricted.',
+            restrictionReason: data.restrictionReason || null,
+            restrictionExpiry: data.restrictionExpiry || null,
+            restrictionSource: data.restrictionSource || 'manual',
+          })
+        );
+      } catch { /* sessionStorage unavailable — proceed anyway */ }
+
+      if (!window.location.pathname.includes('/restricted')) {
+        window.location.href = '/restricted';
+      }
+    }
+
     return Promise.reject(error);
   }
 );
@@ -155,6 +183,14 @@ export const deleteUser = (id) =>
 /** PATCH /users/:id/role — update user role (admin only) */
 export const updateUserRole = (id, role) =>
   api.patch(`/users/${id}/role`, { role });
+
+/** MODULE 1: PATCH /users/:id/restrict — temporarily restrict user account (admin only) */
+export const restrictUser = (id, reason, expiryMinutes) =>
+  api.patch(`/users/${id}/restrict`, { reason, expiryMinutes, source: 'manual' });
+
+/** MODULE 1: PATCH /users/:id/release — release account restriction (admin only) */
+export const releaseRestriction = (id) =>
+  api.patch(`/users/${id}/release`);
 
 /** GET /users/stats — stats for the current user's own activity */
 export const getUserStats = () =>

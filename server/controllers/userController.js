@@ -27,13 +27,107 @@ const { getClientInfo, formatClientInfo } = require('../utils/deviceParser');
 // ─────────────────────────────────────────────────────────────
 // GET ALL USERS  (admin only)
 // GET /api/users
+// MODULE 1: Includes security_status, risk score, and full restriction details
 // ─────────────────────────────────────────────────────────────
 async function listUsers(req, res) {
   try {
     const users = await getAllUsers();
-    // Strip password hashes before sending
-    const safe  = users.map(({ passwordHash, ...u }) => u);
-    return res.json({ users: safe });
+    
+    // Fetch ALL threats once, filter in memory to avoid Firestore index issues
+    const allThreatsSnap = await db.collection(COLLECTIONS.THREAT_LOGS).get();
+    
+    // Build threat map by userId
+    const threatsByUser = {};
+    allThreatsSnap.docs.forEach(doc => {
+      const threat = doc.data();
+      const uId = threat.userId;
+      if (uId) {
+        if (!threatsByUser[uId]) threatsByUser[uId] = [];
+        threatsByUser[uId].push(threat);
+      }
+    });
+    
+    const now = new Date();
+
+    // MODULE 1: Calculate security status + restriction details for each user
+    const enrichedUsers = users.map(user => {
+      const userThreats = threatsByUser[user.id] || [];
+      
+      // Calculate risk score from real ML data (last 10 threats)
+      let riskScore = 0;
+      let highRiskCount = 0;
+      
+      userThreats
+        .sort((a, b) => {
+          const tsA = a.timestamp?.toDate?.()?.getTime() || 0;
+          const tsB = b.timestamp?.toDate?.()?.getTime() || 0;
+          return tsB - tsA;
+        })
+        .slice(0, 10)
+        .forEach(threat => {
+          if (threat.risk_level === 'High') {
+            riskScore += 10;
+            highRiskCount++;
+          } else if (threat.risk_level === 'Medium') {
+            riskScore += 5;
+          } else if (threat.risk_level === 'Low') {
+            riskScore += 1;
+          }
+        });
+
+      // MODULE 1: Auto-expire restrictions whose expiry time has passed
+      let isRestricted = user.restricted === true;
+      if (isRestricted && user.restrictionExpiry) {
+        const expiry = new Date(user.restrictionExpiry);
+        if (!isNaN(expiry.getTime()) && expiry <= now) {
+          // Expired — treat as not restricted (background expiry; Firestore write
+          // happens lazily on next admin action to avoid blocking list response)
+          isRestricted = false;
+        }
+      }
+      
+      // Determine security status based on real data
+      let securityStatus = 'Normal';
+      if (isRestricted) {
+        securityStatus = 'Restricted';
+      } else if (highRiskCount >= 3 || riskScore >= 30) {
+        securityStatus = 'Warning';
+      }
+      
+      // Strip password hash
+      const { passwordHash, ...safeUser } = user;
+      
+      // Build restriction details block
+      const restrictionDetails = isRestricted ? {
+        restrictionStatus:  'Temporary Restricted',
+        restrictionReason:  user.restrictionReason  || 'No reason provided',
+        restrictionSource:  user.restrictionSource  || 'manual',  // 'manual' | 'ml_auto'
+        restrictedBy:       user.restrictedBy       || '—',
+        restrictedAt:       user.restrictedAt       || null,
+        restrictionExpiry:  user.restrictionExpiry  || null,
+        mlRiskScore:        user.mlRiskScore        || null,
+        mlAttackType:       user.mlAttackType       || null,
+      } : {
+        restrictionStatus: 'Not Restricted',
+        restrictionReason: null,
+        restrictionSource: null,
+        restrictedBy:      null,
+        restrictedAt:      null,
+        restrictionExpiry: null,
+        mlRiskScore:       null,
+        mlAttackType:      null,
+      };
+
+      return {
+        ...safeUser,
+        security_status: securityStatus,
+        risk_score:      riskScore,
+        restricted:      isRestricted,
+        ...restrictionDetails,
+      };
+    });
+    
+    return res.json({ users: enrichedUsers });
   } catch (err) {
     console.error('[userController.listUsers]', err);
     return res.status(500).json({ message: 'Failed to retrieve users.' });
@@ -118,6 +212,130 @@ async function updateRole(req, res) {
   } catch (err) {
     console.error('[userController.updateRole]', err);
     return res.status(500).json({ message: 'Failed to update role.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MODULE 1: RESTRICT USER  (admin only)
+// PATCH /api/users/:id/restrict
+// Body: { reason, expiryMinutes, source, mlRiskScore, mlAttackType }
+// Temporarily restricts a user account — never permanent.
+// Also callable internally by the ML auto-restriction flow.
+// ─────────────────────────────────────────────────────────────
+async function restrictUser(req, res) {
+  try {
+    const { id } = req.params;
+    const {
+      reason        = 'Manually restricted by admin',
+      expiryMinutes = 30,
+      source        = 'manual',   // 'manual' | 'ml_auto'
+      mlRiskScore   = null,
+      mlAttackType  = null,
+    } = req.body || {};
+
+    // Prevent admin from restricting themselves
+    if (id === req.user.id) {
+      return res.status(400).json({ message: 'You cannot restrict your own account.' });
+    }
+    
+    const target = await findUserById(id);
+    if (!target) return res.status(404).json({ message: 'User not found.' });
+    
+    // Prevent restricting admin accounts
+    if (target.role === 'admin') {
+      return res.status(403).json({ message: 'Cannot restrict admin accounts.' });
+    }
+
+    // Validate expiry: clamp between 5 minutes and 7 days
+    const clampedMinutes = Math.max(5, Math.min(Number(expiryMinutes) || 30, 10080));
+    const now = new Date();
+    const expiryDate = new Date(now.getTime() + clampedMinutes * 60 * 1000);
+
+    await updateUser(id, { 
+      restricted:          true,
+      restrictedAt:        now.toISOString(),
+      restrictionExpiry:   expiryDate.toISOString(),
+      restrictionReason:   String(reason).slice(0, 500),  // cap length
+      restrictionSource:   source,                        // 'manual' or 'ml_auto'
+      restrictedBy:        req.user.email,
+      mlRiskScore:         mlRiskScore,
+      mlAttackType:        mlAttackType,
+      releasedAt:          null,
+    });
+    
+    const clientInfo = getClientInfo(req);
+    const logDetails = source === 'ml_auto'
+      ? `ML auto-restricted user: ${target.email} — ${reason} (expires in ${clampedMinutes} min)`
+      : `Admin restricted user: ${target.email} — Reason: ${reason} (expires in ${clampedMinutes} min) from ${formatClientInfo(clientInfo)}`;
+
+    await logActivity({
+      userId:     req.user.id,
+      userEmail:  req.user.email,
+      event_type: 'user_restricted',
+      details:    logDetails,
+      ip_address: clientInfo.ip,
+      device:     clientInfo.device,
+      os:         clientInfo.os,
+      browser:    clientInfo.browser,
+      user_agent: clientInfo.userAgent,
+    });
+    
+    return res.json({
+      message:           `User account temporarily restricted for ${clampedMinutes} minutes.`,
+      restricted:        true,
+      restrictionExpiry: expiryDate.toISOString(),
+      restrictionReason: reason,
+      restrictionSource: source,
+    });
+  } catch (err) {
+    console.error('[userController.restrictUser]', err);
+    return res.status(500).json({ message: 'Failed to restrict user.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MODULE 1: RELEASE RESTRICTION  (admin only)
+// PATCH /api/users/:id/release
+// Release a temporary account restriction — clears all restriction fields.
+// ─────────────────────────────────────────────────────────────
+async function releaseRestriction(req, res) {
+  try {
+    const { id } = req.params;
+    
+    const target = await findUserById(id);
+    if (!target) return res.status(404).json({ message: 'User not found.' });
+    
+    // Remove restriction and clear all associated fields
+    await updateUser(id, { 
+      restricted:          false,
+      restrictedAt:        null,
+      restrictionExpiry:   null,
+      restrictionReason:   null,
+      restrictionSource:   null,
+      restrictedBy:        null,
+      mlRiskScore:         null,
+      mlAttackType:        null,
+      releasedAt:          new Date().toISOString(),
+      releasedBy:          req.user.email,
+    });
+    
+    const clientInfo = getClientInfo(req);
+    await logActivity({
+      userId:     req.user.id,
+      userEmail:  req.user.email,
+      event_type: 'restriction_released',
+      details:    `Admin released restriction for user: ${target.email} from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device:     clientInfo.device,
+      os:         clientInfo.os,
+      browser:    clientInfo.browser,
+      user_agent: clientInfo.userAgent,
+    });
+    
+    return res.json({ message: 'Account restriction released.', restricted: false });
+  } catch (err) {
+    console.error('[userController.releaseRestriction]', err);
+    return res.status(500).json({ message: 'Failed to release restriction.' });
   }
 }
 
@@ -259,15 +477,17 @@ async function getActivityLogs(req, res) {
 // ─────────────────────────────────────────────────────────────
 // USER ACTIVITY SUMMARY  (admin only)
 // GET /api/users/activity-summary
+// FIX: Now shows individual login sessions instead of lifetime totals
 // Shows user metadata, real calculated files stored count, and last activity.
 // Does NOT expose user file contents.
 // ─────────────────────────────────────────────────────────────
 async function getUserActivitySummary(req, res) {
   try {
-    const [usersSnap, filesSnap, logsSnap] = await Promise.all([
+    const [usersSnap, filesSnap, logsSnap, threatsSnap] = await Promise.all([
       db.collection(COLLECTIONS.USERS).get(),
       db.collection(COLLECTIONS.FILE_METADATA).get(),
       db.collection(COLLECTIONS.ACTIVITY_LOGS).get(),
+      db.collection(COLLECTIONS.THREAT_LOGS).get(),
     ]);
 
     // Aggregate real files stored count per user
@@ -279,18 +499,58 @@ async function getUserActivitySummary(req, res) {
       }
     });
 
+    // FIX: Build complete login history per user (individual sessions)
+    const loginHistoryMap = {};
+    const deviceInfoMap = {};
+    
+    // Sort all logs by timestamp
+    const sortedLogs = logsSnap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => {
+        const tsA = a.timestamp?.toDate?.()?.getTime() || 0;
+        const tsB = b.timestamp?.toDate?.()?.getTime() || 0;
+        return tsB - tsA;  // Most recent first
+      });
+    
+    // Build login history (individual login events with timestamps)
+    sortedLogs.forEach(d => {
+      const uId = d.userId;
+      if (!uId) return;
+      
+      // Initialize login history array for this user
+      if (!loginHistoryMap[uId]) {
+        loginHistoryMap[uId] = [];
+      }
+      
+      // Capture login/logout events with full details
+      if (d.event_type === 'login' || d.event_type === 'login_failed' || d.event_type === 'logout') {
+        loginHistoryMap[uId].push({
+          event_type: d.event_type,
+          timestamp: d.timestamp?.toDate?.()?.toISOString() || null,
+          device: d.device || '—',
+          os: d.os || '—',
+          browser: d.browser || '—',
+          ip_address: d.ip_address || '—',
+          details: d.details || '',
+        });
+      }
+      
+      // Capture most recent device info (only once per user)
+      if (d.event_type === 'login' && !deviceInfoMap[uId] && (d.device || d.os || d.browser)) {
+        deviceInfoMap[uId] = {
+          device: d.device || '—',
+          os: d.os || '—',
+          browser: d.browser || '—',
+        };
+      }
+    });
+
     // Map last activity per user ID / email
     const lastActivityMap = {};
-    logsSnap.docs.forEach(doc => {
-      const d = doc.data();
+    sortedLogs.forEach(d => {
       const uId = d.userId;
       const email = d.user_email;
-      let ts = null;
-      if (d.timestamp?.toDate) {
-        ts = d.timestamp.toDate().toISOString();
-      } else if (d.timestamp) {
-        ts = new Date(d.timestamp).toISOString();
-      }
+      const ts = d.timestamp?.toDate?.()?.toISOString() || (d.timestamp ? new Date(d.timestamp).toISOString() : null);
 
       if (uId && ts) {
         if (!lastActivityMap[uId] || new Date(ts) > new Date(lastActivityMap[uId])) {
@@ -302,6 +562,40 @@ async function getUserActivitySummary(req, res) {
           lastActivityMap[email] = ts;
         }
       }
+    });
+    
+    // Build recent risk history per user from real ML data
+    const riskHistoryMap = {};
+    threatsSnap.docs.forEach(doc => {
+      const threat = doc.data();
+      const uId = threat.userId;
+      
+      if (!uId) return;
+      
+      if (!riskHistoryMap[uId]) {
+        riskHistoryMap[uId] = [];
+      }
+      
+      // Only include if we have real risk data
+      if (threat.risk_level && threat.attack_type) {
+        riskHistoryMap[uId].push({
+          risk_level: threat.risk_level,
+          attack_type: threat.attack_type,
+          confidence_score: threat.confidence_score || 0,
+          timestamp: threat.timestamp?.toDate?.()?.toISOString() || null,
+        });
+      }
+    });
+    
+    // Sort risk history by timestamp (most recent first) and limit to 5
+    Object.keys(riskHistoryMap).forEach(uId => {
+      riskHistoryMap[uId] = riskHistoryMap[uId]
+        .sort((a, b) => {
+          const dateA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+          const dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+          return dateB - dateA;
+        })
+        .slice(0, 5);
     });
 
     const userActivity = usersSnap.docs
@@ -316,6 +610,11 @@ async function getUserActivitySummary(req, res) {
         }
 
         const lastAct = lastActivityMap[id] || (u.email ? lastActivityMap[u.email] : null) || created;
+        
+        // Get device info and login history
+        const deviceInfo = deviceInfoMap[id] || { device: '—', os: '—', browser: '—' };
+        const loginHistory = loginHistoryMap[id] || [];
+        const riskHistory = riskHistoryMap[id] || [];
 
         return {
           id,
@@ -325,6 +624,12 @@ async function getUserActivitySummary(req, res) {
           filesStored:  fileCountMap[id] || 0,
           lastActivity: lastAct,
           createdAt:    created,
+          // FIX: Return individual login history instead of totals
+          loginHistory: loginHistory.slice(0, 10),  // Last 10 login events
+          device:       deviceInfo.device,
+          os:           deviceInfo.os,
+          browser:      deviceInfo.browser,
+          riskHistory:  riskHistory,
         };
       })
       .sort((a, b) => {
@@ -344,6 +649,8 @@ module.exports = {
   listUsers,
   deleteUser,
   updateRole,
+  restrictUser,        // MODULE 1: New
+  releaseRestriction,  // MODULE 1: New
   getUserStats,
   getAdminStats,
   getActivityLogs,

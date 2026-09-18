@@ -13,6 +13,7 @@ import ThreatMonitoring from './pages/ThreatMonitoring';
 import UserManagement from './pages/UserManagement';
 import UserActivity   from './pages/UserActivity';
 import ActivityLogs   from './pages/ActivityLogs';
+import RestrictedPage from './pages/RestrictedPage';
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute';
@@ -190,8 +191,10 @@ function App() {
         <Router>
           <Routes>
             {/* Public routes */}
-            <Route path="/login"    element={<Login />} />
-            <Route path="/register" element={<Register />} />
+            <Route path="/login"      element={<Login />} />
+            <Route path="/register"   element={<Register />} />
+            {/* Restricted account landing — accessible while token is still valid */}
+            <Route path="/restricted" element={<RestrictedPage />} />
 
             {/* Admin-only routes */}
             <Route element={<ProtectedRoute requiredRole="admin" />}>

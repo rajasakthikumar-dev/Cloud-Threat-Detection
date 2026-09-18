@@ -17,6 +17,8 @@ const {
   listUsers,
   deleteUser,
   updateRole,
+  restrictUser,              // MODULE 1: New
+  releaseRestriction,        // MODULE 1: New
   getUserStats,
   getAdminStats,
   getUserActivitySummary,
@@ -33,6 +35,8 @@ router.get('/',                  adminOnly, listUsers);
 router.get('/activity-summary',  adminOnly, getUserActivitySummary);
 router.delete('/:id',            adminOnly, deleteUser);
 router.patch('/:id/role',        adminOnly, updateRole);
+router.patch('/:id/restrict',    adminOnly, restrictUser);      // MODULE 1: New
+router.patch('/:id/release',     adminOnly, releaseRestriction); // MODULE 1: New
 router.get('/admin/stats',       adminOnly, getAdminStats);
 
 module.exports = router;

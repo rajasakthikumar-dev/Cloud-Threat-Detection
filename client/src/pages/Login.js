@@ -67,7 +67,7 @@ export default function Login() {
             letterSpacing:'-0.02em',
             color: 'var(--text-primary)',
           }}>
-            AI Threat Detection
+            Secure Cloud Storage
           </span>
         </div>
 

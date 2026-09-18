@@ -182,6 +182,10 @@ async function logout(req, res) {
 // ─────────────────────────────────────────────────────────────
 // GET CURRENT USER
 // GET /api/auth/me
+// Returns the full user document including current restriction state.
+// This endpoint is EXEMPT from the restriction block in authMiddleware
+// so that the frontend restriction-poll can detect new restrictions
+// and the RestrictedPage can display accurate information.
 // ─────────────────────────────────────────────────────────────
 async function getMe(req, res) {
   try {
@@ -190,7 +194,28 @@ async function getMe(req, res) {
 
     // Never send the password hash to the client
     const { passwordHash, ...safeUser } = user;
-    return res.json({ user: safeUser });
+
+    // If the user is currently restricted, include restriction details in the
+    // response so the frontend can immediately show the restricted page without
+    // waiting for the next protected API call to 403.
+    const now = Date.now();
+    const isRestricted = safeUser.restricted === true;
+    let restrictionExpired = false;
+
+    if (isRestricted && safeUser.restrictionExpiry) {
+      const expiryMs = new Date(safeUser.restrictionExpiry).getTime();
+      if (!isNaN(expiryMs) && expiryMs <= now) {
+        restrictionExpired = true;
+      }
+    }
+
+    return res.json({
+      user: {
+        ...safeUser,
+        // Normalise restriction state considering expiry
+        restricted: isRestricted && !restrictionExpired,
+      },
+    });
   } catch (err) {
     console.error('[authController.getMe]', err);
     return res.status(500).json({ message: 'Failed to retrieve user.' });

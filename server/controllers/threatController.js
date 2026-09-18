@@ -63,6 +63,65 @@ async function analyzeActivity(req, res) {
       ip_address: clientIp,
     });
 
+    // ── MODULE 1: AUTO-RESTRICTION on HIGH risk ───────────────
+    // When the ML model returns HIGH risk, automatically apply a
+    // temporary 30-minute restriction to the user's account.
+    // Does NOT block admins, does NOT duplicate an existing active restriction.
+    if (risk_level === 'High') {
+      try {
+        const { findUserById, updateUser } = require('../config/firebase');
+        const targetUser = await findUserById(req.user.id);
+
+        // Only auto-restrict regular users; never restrict admins
+        if (targetUser && targetUser.role !== 'admin') {
+          const now = new Date();
+          let alreadyRestricted = targetUser.restricted === true;
+
+          // Check if existing restriction has already expired
+          if (alreadyRestricted && targetUser.restrictionExpiry) {
+            const expiry = new Date(targetUser.restrictionExpiry);
+            if (!isNaN(expiry.getTime()) && expiry <= now) {
+              alreadyRestricted = false;  // expired — can apply fresh restriction
+            }
+          }
+
+          if (!alreadyRestricted) {
+            const expiryMinutes = 30;
+            const expiryDate = new Date(now.getTime() + expiryMinutes * 60 * 1000);
+            const reason = `ML Auto-Restriction: ${attack_type} detected at ${confidence_score}% confidence`;
+
+            await updateUser(req.user.id, {
+              restricted:          true,
+              restrictedAt:        now.toISOString(),
+              restrictionExpiry:   expiryDate.toISOString(),
+              restrictionReason:   reason,
+              restrictionSource:   'ml_auto',
+              restrictedBy:        'system (ML)',
+              mlRiskScore:         confidence_score,
+              mlAttackType:        attack_type,
+              releasedAt:          null,
+            });
+
+            await logActivity({
+              userId:     req.user.id,
+              userEmail:  req.user.email,
+              event_type: 'user_restricted',
+              details:    `[AUTO] ${reason} — account restricted for ${expiryMinutes} minutes`,
+              ip_address: clientIp,
+            });
+
+            console.log(`[threatController] AUTO-RESTRICTION applied to user ${req.user.email} — ${reason}`);
+          } else {
+            console.log(`[threatController] HIGH risk for ${req.user.email} but restriction already active — skipping duplicate`);
+          }
+        }
+      } catch (restrictErr) {
+        // Auto-restriction failure must never break the ML response
+        console.error('[threatController] Auto-restriction error:', restrictErr.message);
+      }
+    }
+    // ─────────────────────────────────────────────────────────
+
     // Broadcast real-time alert via Socket.io to all connected clients
     const emitThreatAlert = req.app.get('emitThreatAlert');
     if (emitThreatAlert) {
