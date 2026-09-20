@@ -43,7 +43,8 @@ export default function RestrictedPage() {
     navigate('/login', { replace: true });
   };
 
-  const isMLAuto = info?.restrictionSource === 'ml_auto';
+  const isMLAuto        = info?.restrictionSource === 'ml_auto';
+  const isAuthRule      = info?.restrictionSource === 'authentication_rule';
 
   return (
     <div style={{
@@ -104,18 +105,21 @@ export default function RestrictedPage() {
           </p>
 
           {/* Source badge */}
-          {isMLAuto && (
+          {(isMLAuto || isAuthRule) && (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
               padding: '0.5rem 1rem',
-              background: 'rgba(139,92,246,0.08)',
-              border: '1px solid rgba(139,92,246,0.25)',
+              background: isAuthRule ? 'rgba(251,146,60,0.08)' : 'rgba(139,92,246,0.08)',
+              border: `1px solid ${isAuthRule ? 'rgba(251,146,60,0.25)' : 'rgba(139,92,246,0.25)'}`,
               borderRadius: '999px',
-              fontSize: '0.8rem', fontWeight: 600, color: '#7c3aed',
+              fontSize: '0.8rem', fontWeight: 600,
+              color: isAuthRule ? '#d97706' : '#7c3aed',
               alignSelf: 'center',
             }}>
-              <FiCpu size={14} />
-              Detected by automated security system
+              {isAuthRule
+                ? <><span>🔐</span> Detected by authentication behavior monitor</>
+                : <><FiCpu size={14} /> Detected by automated security system (ML)</>
+              }
             </div>
           )}
 
@@ -180,7 +184,8 @@ export default function RestrictedPage() {
             textAlign: 'center', lineHeight: 1.5,
           }}>
             Your files and data are safe. This restriction is temporary and does not affect your stored data.
-            {!isMLAuto && ' An administrator can release this restriction manually.'}
+            {!isMLAuto && !isAuthRule && ' An administrator can release this restriction manually.'}
+            {isAuthRule && ' The restriction will lift automatically when the time expires.'}
           </p>
 
           {/* Logout button */}

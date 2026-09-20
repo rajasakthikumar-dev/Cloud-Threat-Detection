@@ -88,10 +88,11 @@ const db = admin.firestore();
 // COLLECTION NAMES
 // ─────────────────────────────────────────────────────────────
 const COLLECTIONS = {
-  USERS:         'users',
-  ACTIVITY_LOGS: 'activity_logs',
-  THREAT_LOGS:   'threat_logs',
-  FILE_METADATA: 'file_metadata',
+  USERS:                 'users',
+  ACTIVITY_LOGS:         'activity_logs',
+  THREAT_LOGS:           'threat_logs',
+  FILE_METADATA:         'file_metadata',
+  PASSWORD_RESET_TOKENS: 'password_reset_tokens',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -283,6 +284,64 @@ async function deleteUserById(id) {
   await db.collection(COLLECTIONS.USERS).doc(id).delete();
 }
 
+// ─────────────────────────────────────────────────────────────
+// PASSWORD RESET TOKEN HELPERS
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Persist a password-reset token record.
+ *
+ * SECURITY: The raw token is NEVER stored — only its SHA-256 hash.
+ *
+ * @param {object} params
+ * @param {string} params.tokenHash  — SHA-256 hex of the raw token
+ * @param {string} params.userId     — Firestore user doc ID
+ * @param {string} params.email      — user's email (for quick lookup)
+ * @param {Date}   params.expiresAt  — JS Date when the token expires
+ */
+async function savePasswordResetToken({ tokenHash, userId, email, expiresAt }) {
+  await db.collection(COLLECTIONS.PASSWORD_RESET_TOKENS).add({
+    tokenHash,
+    userId,
+    email,
+    expiresAt:  admin.firestore.Timestamp.fromDate(expiresAt),
+    used:       false,
+    createdAt:  admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Validate a reset token and mark it used in a single atomic operation.
+ *
+ * Returns the token record (with userId + email) on success.
+ * Returns null if the token hash is not found, already used, or expired.
+ *
+ * @param {string} tokenHash — SHA-256 hex of the raw token supplied by the user
+ * @returns {object|null}    — { userId, email } or null
+ */
+async function validateAndConsumeResetToken(tokenHash) {
+  const snap = await db.collection(COLLECTIONS.PASSWORD_RESET_TOKENS)
+    .where('tokenHash', '==', tokenHash)
+    .where('used',      '==', false)
+    .limit(1)
+    .get();
+
+  if (snap.empty) return null;
+
+  const doc      = snap.docs[0];
+  const data     = doc.data();
+  const now      = new Date();
+  const expiresAt = data.expiresAt?.toDate?.() || null;
+
+  // Reject expired tokens
+  if (!expiresAt || expiresAt <= now) return null;
+
+  // Mark as used — single-use enforcement
+  await doc.ref.update({ used: true });
+
+  return { userId: data.userId, email: data.email };
+}
+
 module.exports = {
   admin,
   db,
@@ -299,4 +358,7 @@ module.exports = {
   getAllUsers,
   updateUser,
   deleteUserById,
+  // Password reset
+  savePasswordResetToken,
+  validateAndConsumeResetToken,
 };

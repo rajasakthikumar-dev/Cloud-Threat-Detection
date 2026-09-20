@@ -131,6 +131,14 @@ export const logoutUser = () =>
 export const getMe = () =>
   api.get('/auth/me');
 
+/** POST /auth/forgot-password — request a password-reset email (public, no token needed) */
+export const forgotPassword = (data) =>
+  api.post('/auth/forgot-password', data);
+
+/** POST /auth/reset-password — submit new password with reset token (public) */
+export const resetPassword = (data) =>
+  api.post('/auth/reset-password', data);
+
 // ════════════════════════════════════════════════════════════
 // FILES  (AWS S3)
 // ════════════════════════════════════════════════════════════

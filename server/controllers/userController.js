@@ -564,7 +564,7 @@ async function getUserActivitySummary(req, res) {
       }
     });
     
-    // Build recent risk history per user from real ML data
+    // Build recent risk history per user from real ML and auth-rule data
     const riskHistoryMap = {};
     threatsSnap.docs.forEach(doc => {
       const threat = doc.data();
@@ -576,13 +576,15 @@ async function getUserActivitySummary(req, res) {
         riskHistoryMap[uId] = [];
       }
       
-      // Only include if we have real risk data
+      // Include ML detections and authentication_rule detections (both are real)
       if (threat.risk_level && threat.attack_type) {
         riskHistoryMap[uId].push({
-          risk_level: threat.risk_level,
-          attack_type: threat.attack_type,
+          risk_level:       threat.risk_level,
+          attack_type:      threat.attack_type,
           confidence_score: threat.confidence_score || 0,
-          timestamp: threat.timestamp?.toDate?.()?.toISOString() || null,
+          // detection_method distinguishes LSTM from auth-rule
+          detection_method: threat.raw_input?.detection_method || 'ml_auto',
+          timestamp:        threat.timestamp?.toDate?.()?.toISOString() || null,
         });
       }
     });
@@ -629,7 +631,7 @@ async function getUserActivitySummary(req, res) {
           device:       deviceInfo.device,
           os:           deviceInfo.os,
           browser:      deviceInfo.browser,
-          riskHistory:  riskHistory,
+          riskHistory:  riskHistory,  // includes detection_method for each entry
         };
       })
       .sort((a, b) => {

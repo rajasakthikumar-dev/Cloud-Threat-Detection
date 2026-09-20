@@ -461,15 +461,22 @@ export default function UserManagement() {
                               {isRestricted ? <FiLock size={11} /> : <FiUnlock size={11} />}
                               {restStatus}
                             </span>
-                            {/* ML auto badge */}
-                            {isRestricted && isMlAuto && (
+                            {/* Source badge — honest labeling */}
+                            {isRestricted && (
                               <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                                fontSize: 'var(--font-size-xs)', color: 'var(--purple)',
-                                background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)',
+                                fontSize: 'var(--font-size-xs)',
+                                color: isMlAuto ? 'var(--purple)' : 
+                                       u.restrictionSource === 'authentication_rule' ? 'var(--warning)' : 'var(--text-muted)',
+                                background: isMlAuto ? 'rgba(139,92,246,0.1)' : 
+                                            u.restrictionSource === 'authentication_rule' ? 'rgba(251,146,60,0.1)' : 'var(--bg-secondary)',
+                                border: `1px solid ${isMlAuto ? 'rgba(139,92,246,0.25)' : 
+                                        u.restrictionSource === 'authentication_rule' ? 'rgba(251,146,60,0.25)' : 'var(--border-color)'}`,
                                 padding: '0.125rem 0.5rem', borderRadius: '999px',
                               }}>
-                                <FiCpu size={10} /> ML Auto
+                                {isMlAuto && <><FiCpu size={10} /> ML Auto</>}
+                                {u.restrictionSource === 'authentication_rule' && <><FiAlertTriangle size={10} /> Auth Rule</>}
+                                {!isMlAuto && u.restrictionSource !== 'authentication_rule' && <>Manual</>}
                               </span>
                             )}
                           </div>

@@ -824,6 +824,12 @@ export default function UserActivity() {
                           }}>
                             {risk.risk_level} Risk — {risk.attack_type}
                           </p>
+                          {/* Honest detection-method label */}
+                          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                            {risk.detection_method === 'authentication_rule'
+                              ? '🔐 Authentication behavior detection'
+                              : '🤖 ML detection (LSTM)'}
+                          </p>
                           <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
                             {risk.timestamp ? formatTimestamp(risk.timestamp) : 'No timestamp'}
                           </p>

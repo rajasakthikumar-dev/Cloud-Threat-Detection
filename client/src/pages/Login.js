@@ -148,7 +148,7 @@ export default function Login() {
           }}>
             Password
           </label>
-          <div style={{ position:'relative', marginBottom:'1.75rem' }}>
+          <div style={{ position:'relative', marginBottom:'0.625rem' }}>
             <FiLock size={18} style={{ 
               position:'absolute', 
               left:'1rem', 
@@ -183,6 +183,16 @@ export default function Login() {
                 e.target.style.boxShadow = 'none'; 
               }}
             />
+          </div>
+
+          {/* Forgot password link */}
+          <div style={{ textAlign:'right', marginBottom:'1.25rem' }}>
+            <Link
+              to="/forgot-password"
+              style={{ fontSize:'var(--font-size-sm)', color:'var(--primary)', fontWeight:600, textDecoration:'none' }}
+            >
+              Forgot Password?
+            </Link>
           </div>
 
           <button

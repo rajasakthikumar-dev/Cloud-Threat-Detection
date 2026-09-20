@@ -8,6 +8,7 @@
 const axios = require('axios');
 const { logThreat, logActivity, db, COLLECTIONS } = require('../config/firebase');
 const { getClientIp } = require('../utils/ipExtractor');
+const { ML_AUTO } = require('../config/securityRules');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 
@@ -65,7 +66,8 @@ async function analyzeActivity(req, res) {
 
     // ── MODULE 1: AUTO-RESTRICTION on HIGH risk ───────────────
     // When the ML model returns HIGH risk, automatically apply a
-    // temporary 30-minute restriction to the user's account.
+    // temporary restriction to the user's account.
+    // Source = 'ml_auto' — honest label, this IS the LSTM result.
     // Does NOT block admins, does NOT duplicate an existing active restriction.
     if (risk_level === 'High') {
       try {
@@ -86,16 +88,16 @@ async function analyzeActivity(req, res) {
           }
 
           if (!alreadyRestricted) {
-            const expiryMinutes = 30;
+            const expiryMinutes = ML_AUTO.RESTRICTION_MINUTES;
             const expiryDate = new Date(now.getTime() + expiryMinutes * 60 * 1000);
-            const reason = `ML Auto-Restriction: ${attack_type} detected at ${confidence_score}% confidence`;
+            const reason = `ML Detection: ${attack_type} detected at ${confidence_score}% confidence`;
 
             await updateUser(req.user.id, {
               restricted:          true,
               restrictedAt:        now.toISOString(),
               restrictionExpiry:   expiryDate.toISOString(),
               restrictionReason:   reason,
-              restrictionSource:   'ml_auto',
+              restrictionSource:   'ml_auto',           // honest — LSTM detected this
               restrictedBy:        'system (ML)',
               mlRiskScore:         confidence_score,
               mlAttackType:        attack_type,
@@ -106,11 +108,11 @@ async function analyzeActivity(req, res) {
               userId:     req.user.id,
               userEmail:  req.user.email,
               event_type: 'user_restricted',
-              details:    `[AUTO] ${reason} — account restricted for ${expiryMinutes} minutes`,
+              details:    `[ML AUTO] ${reason} — account restricted for ${expiryMinutes} minutes`,
               ip_address: clientIp,
             });
 
-            console.log(`[threatController] AUTO-RESTRICTION applied to user ${req.user.email} — ${reason}`);
+            console.log(`[threatController] ML AUTO-RESTRICTION applied to user ${req.user.email} — ${reason}`);
           } else {
             console.log(`[threatController] HIGH risk for ${req.user.email} but restriction already active — skipping duplicate`);
           }
@@ -180,6 +182,8 @@ async function getThreats(req, res) {
       source_ip:        doc.data().source_ip,
       userId:           doc.data().userId,
       user_email:       doc.data().user_email,
+      // detection_method is stored inside raw_input for auth-rule records
+      detection_method: doc.data().raw_input?.detection_method || 'ml_auto',
       timestamp:        doc.data().timestamp?.toDate()?.toISOString(),
     }));
 
@@ -219,16 +223,16 @@ async function getThreatStats(req, res) {
       catCounts[cat] = (catCounts[cat] || 0) + 1;
 
       // Group by date for timeline (Normal vs Attack)
-      // FIXED: Use attack_type field (ML prediction), NOT risk_level
       const date = d.timestamp?.toDate()?.toLocaleDateString() || 'Unknown';
       if (!timeMap[date]) timeMap[date] = { normal: 0, attack: 0 };
-      
+
+      // ML-detected Normal/Attack records
       if (d.attack_type === 'Normal') {
         timeMap[date].normal++;
-      } else if (d.attack_type === 'Attack') {
+      } else if (d.attack_type === 'Attack' || d.attack_type === 'Brute Force Attempt') {
+        // 'Brute Force Attempt' = authentication_rule detection = is an attack event
         timeMap[date].attack++;
       }
-      // Records without attack_type are ignored (don't count as Normal or Attack)
     });
 
     const categories = Object.entries(catCounts)
@@ -270,6 +274,7 @@ async function getRecentThreats(req, res) {
       risk_level:       doc.data().risk_level,
       confidence_score: doc.data().confidence_score,
       source_ip:        doc.data().source_ip,
+      detection_method: doc.data().raw_input?.detection_method || 'ml_auto',
       timestamp:        doc.data().timestamp?.toDate()?.toISOString(),
     }));
 
