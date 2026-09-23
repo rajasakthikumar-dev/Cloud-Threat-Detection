@@ -647,15 +647,154 @@ async function getUserActivitySummary(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// ADMIN SECURITY SUMMARY  (admin only)
+// GET /api/users/admin/security-summary
+//
+// Returns all data needed for the 3 new dashboard security sections:
+//   1. Restricted Accounts counts (total, manual, ml_auto, auth_rule)
+//   2. Security Response counters (ml_auto, manual, auth_rule restrictions
+//      raised historically from activity_logs)
+//   3. Recent Security Activity — last 20 security-relevant activity log
+//      events (login, login_failed, threat_detected, user_restricted,
+//      restriction_released) across all users
+//
+// All data comes from existing Firestore collections — no new collections.
+// ─────────────────────────────────────────────────────────────
+async function getAdminSecuritySummary(req, res) {
+  try {
+    const now = new Date();
+
+    // Single parallel fetch — users + activity_logs only
+    // (threat_logs not needed here; threat counts come from getAdminStats)
+    const [usersSnap, logsSnap] = await Promise.all([
+      db.collection(COLLECTIONS.USERS).get(),
+      db.collection(COLLECTIONS.ACTIVITY_LOGS)
+        .orderBy('timestamp', 'desc')
+        .limit(200)           // enough history for counters + recent list
+        .get(),
+    ]);
+
+    // ── Section 1 + 2: Restricted accounts ───────────────────
+    let totalRestricted   = 0;
+    let manualCount       = 0;
+    let mlAutoCount       = 0;
+    let authRuleCount     = 0;
+
+    usersSnap.docs.forEach(doc => {
+      const u = doc.data();
+
+      // Skip admins (they can never be restricted)
+      if (u.role === 'admin') return;
+
+      let isRestricted = u.restricted === true;
+
+      // Respect expiry inline — don't rely on stale Firestore state
+      if (isRestricted && u.restrictionExpiry) {
+        const expiry = new Date(u.restrictionExpiry);
+        if (!isNaN(expiry.getTime()) && expiry <= now) {
+          isRestricted = false;
+        }
+      }
+
+      if (!isRestricted) return;
+
+      totalRestricted++;
+      const src = u.restrictionSource || 'manual';
+      if (src === 'ml_auto')             mlAutoCount++;
+      else if (src === 'authentication_rule') authRuleCount++;
+      else                                manualCount++;
+    });
+
+    // ── Section 2 counters: all-time restriction events from logs ─
+    // We count user_restricted events by source from the activity log.
+    // This gives lifetime "Security Response" totals.
+    let allTimeMlAuto     = 0;
+    let allTimeManual     = 0;
+    let allTimeAuthRule   = 0;
+    let allTimeReleased   = 0;
+
+    // ── Section 3: Recent security activity ──────────────────
+    const SECURITY_EVENTS = new Set([
+      'login',
+      'login_failed',
+      'threat_detected',
+      'user_restricted',
+      'restriction_released',
+      'password_reset_requested',
+      'password_reset_completed',
+    ]);
+
+    const recentActivity = [];
+
+    logsSnap.docs.forEach(doc => {
+      const d = doc.data();
+      const eventType = d.event_type || '';
+
+      // Count restriction events for section 2 counters
+      if (eventType === 'user_restricted') {
+        // Try to infer source from the details text if not stored as a field
+        const details = (d.details || '').toLowerCase();
+        if (d.restrictionSource === 'ml_auto' || details.includes('[ml auto]') || details.includes('ml auto-restriction') || details.includes('ml detection')) {
+          allTimeMlAuto++;
+        } else if (d.restrictionSource === 'authentication_rule' || details.includes('[auth rule]') || details.includes('authentication rule')) {
+          allTimeAuthRule++;
+        } else {
+          allTimeManual++;
+        }
+      }
+      if (eventType === 'restriction_released') {
+        allTimeReleased++;
+      }
+
+      // Collect recent security events (max 20)
+      if (SECURITY_EVENTS.has(eventType) && recentActivity.length < 20) {
+        recentActivity.push({
+          id:         doc.id,
+          event_type: eventType,
+          user_email: d.user_email  || d.userEmail || '—',
+          details:    d.details     || '',
+          ip_address: d.ip_address  || '—',
+          timestamp:  d.timestamp?.toDate?.()?.toISOString() || null,
+        });
+      }
+    });
+
+    return res.json({
+      // Section 1 — currently restricted right now
+      restrictedAccounts: {
+        total:          totalRestricted,
+        manual:         manualCount,
+        mlAuto:         mlAutoCount,
+        authRule:       authRuleCount,
+      },
+      // Section 2 — all-time security response counters
+      securityResponse: {
+        mlAutoRestrictions:   allTimeMlAuto,
+        manualRestrictions:   allTimeManual,
+        authRuleRestrictions: allTimeAuthRule,
+        restrictionsReleased: allTimeReleased,
+        currentlyRestricted:  totalRestricted,
+      },
+      // Section 3 — recent security events (already sorted desc by query)
+      recentSecurityActivity: recentActivity,
+    });
+  } catch (err) {
+    console.error('[userController.getAdminSecuritySummary]', err);
+    return res.status(500).json({ message: 'Failed to retrieve security summary.' });
+  }
+}
+
 module.exports = {
   listUsers,
   deleteUser,
   updateRole,
-  restrictUser,        // MODULE 1: New
-  releaseRestriction,  // MODULE 1: New
+  restrictUser,
+  releaseRestriction,
   getUserStats,
   getAdminStats,
   getActivityLogs,
   getUserActivitySummary,
+  getAdminSecuritySummary,
 };
 

@@ -241,6 +241,10 @@ export const analyzeActivity = (data) =>
 export const getAdminStats = () =>
   api.get('/users/admin/stats');
 
+/** GET /users/admin/security-summary — restriction counts + recent security events (admin only) */
+export const getAdminSecuritySummary = () =>
+  api.get('/users/admin/security-summary');
+
 // ════════════════════════════════════════════════════════════
 // ACTIVITY LOGS  (Firebase)
 // ════════════════════════════════════════════════════════════

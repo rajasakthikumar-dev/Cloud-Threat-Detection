@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { FiUsers, FiAlertTriangle, FiFolder, FiActivity, FiShield } from 'react-icons/fi';
+import {
+  FiUsers, FiAlertTriangle, FiFolder, FiActivity, FiShield,
+  FiLock, FiCpu, FiUserCheck, FiLogIn, FiAlertCircle,
+  FiUnlock, FiKey,
+} from 'react-icons/fi';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import DashboardCard from '../components/DashboardCard';
 import AlertBox from '../components/AlertBox';
 import ThreatChart, { AttackCategoryBar, RiskLevelPie } from '../components/ThreatChart';
-import { getAdminStats, getRecentThreats } from '../services/api';
+import { getAdminStats, getRecentThreats, getAdminSecuritySummary } from '../services/api';
 import { useSocket, useAuth } from '../App';
 
 /**
@@ -14,11 +18,12 @@ import { useSocket, useAuth } from '../App';
  */
 
 const PLACEHOLDER = {
-  stats:  { users:0, files:0, threats:0, alerts:0 },
-  area:   [],
-  bar:    [],
-  pie:    [{ name:'Low', value:60 }, { name:'Medium', value:30 }, { name:'High', value:10 }],
-  recent: [],
+  stats:    { users:0, files:0, threats:0, alerts:0 },
+  area:     [],
+  bar:      [],
+  pie:      [{ name:'Low', value:60 }, { name:'Medium', value:30 }, { name:'High', value:10 }],
+  recent:   [],
+  security: null,
 };
 
 export default function AdminDashboard() {
@@ -29,6 +34,7 @@ export default function AdminDashboard() {
   const [bar,      setBar]      = useState(PLACEHOLDER.bar);
   const [pie,      setPie]      = useState(PLACEHOLDER.pie);
   const [recent,   setRecent]   = useState(PLACEHOLDER.recent);
+  const [security, setSecurity] = useState(PLACEHOLDER.security);
   const [rtAlerts, setRtAlerts] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
@@ -40,7 +46,11 @@ export default function AdminDashboard() {
     async function fetchAll() {
       setError(null);
       try {
-        const [statsRes, threatsRes] = await Promise.all([getAdminStats(), getRecentThreats()]);
+        const [statsRes, threatsRes, secRes] = await Promise.all([
+          getAdminStats(),
+          getRecentThreats(),
+          getAdminSecuritySummary(),
+        ]);
         const d = statsRes.data;
         setStats({ 
           users: d.totalUsers || 0, 
@@ -52,6 +62,7 @@ export default function AdminDashboard() {
         setBar(d.categoryBreakdown || []);
         setPie(d.riskDistribution  || PLACEHOLDER.pie);
         setRecent(threatsRes.data.threats || []);
+        setSecurity(secRes.data || null);
       } catch (err) {
         setError(err.response?.data?.message || 'Failed to load dashboard data.');
       } finally { 
@@ -171,6 +182,20 @@ export default function AdminDashboard() {
               {/* Recent threats */}
               <p style={sectionTitle}>Recent Threats</p>
               <RecentThreatsTable rows={recent} loading={loading} />
+
+              {/* ═══ NEW SECURITY SECTIONS ═══════════════════════════ */}
+
+              {/* ── Section 1: Restricted Accounts ── */}
+              <p style={{ ...sectionTitle, marginTop: '2.5rem' }}>Restricted Accounts</p>
+              <RestrictedAccountsSection data={security?.restrictedAccounts} />
+
+              {/* ── Section 2: Security Response ── */}
+              <p style={{ ...sectionTitle, marginTop: '2.5rem' }}>Security Response</p>
+              <SecurityResponseSection data={security?.securityResponse} />
+
+              {/* ── Section 3: Recent Security Activity ── */}
+              <p style={{ ...sectionTitle, marginTop: '2.5rem' }}>Recent Security Activity</p>
+              <RecentSecurityActivity rows={security?.recentSecurityActivity} />
             </>
           )}
 
@@ -185,8 +210,7 @@ export default function AdminDashboard() {
   );
 }
 
-function RecentThreatsTable({ rows, loading }) {
-  const riskColor = r => r === 'High' ? 'var(--danger)' : r === 'Medium' ? 'var(--warning)' : 'var(--success)';
+function RecentThreatsTable({ rows, loading }) {  const riskColor = r => r === 'High' ? 'var(--danger)' : r === 'Medium' ? 'var(--warning)' : 'var(--success)';
   const riskBg    = r => r === 'High' ? 'var(--danger-light)' : r === 'Medium' ? 'var(--warning-light)' : 'var(--success-light)';
 
   const formatTimestamp = (ts) => {
@@ -297,6 +321,377 @@ function RecentThreatsTable({ rows, loading }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section 1: Restricted Accounts
+// Shows current restriction breakdown by source
+// ─────────────────────────────────────────────────────────────
+function RestrictedAccountsSection({ data }) {
+  const total    = data?.total    ?? '—';
+  const manual   = data?.manual   ?? '—';
+  const mlAuto   = data?.mlAuto   ?? '—';
+  const authRule = data?.authRule ?? '—';
+
+  const tiles = [
+    {
+      label: 'Total Restricted',
+      value: total,
+      icon: <FiLock size={22} />,
+      color: 'var(--danger)',
+      bg:    'var(--danger-light)',
+      border: 'rgba(239,68,68,0.25)',
+      desc:  'Accounts blocked right now',
+    },
+    {
+      label: 'Manual (Admin)',
+      value: manual,
+      icon: <FiUserCheck size={22} />,
+      color: 'var(--warning)',
+      bg:    'var(--warning-light)',
+      border: 'rgba(251,146,60,0.25)',
+      desc:  'Admin-applied restrictions',
+    },
+    {
+      label: 'ML Auto-Restricted',
+      value: mlAuto,
+      icon: <FiCpu size={22} />,
+      color: 'var(--purple, #7c3aed)',
+      bg:    'rgba(139,92,246,0.08)',
+      border: 'rgba(139,92,246,0.25)',
+      desc:  'LSTM HIGH-risk detections',
+    },
+    {
+      label: 'Auth Rule',
+      value: authRule,
+      icon: <FiAlertCircle size={22} />,
+      color: 'var(--info)',
+      bg:    'var(--info-light)',
+      border: 'rgba(6,182,212,0.25)',
+      desc:  'Brute-force threshold triggered',
+    },
+  ];
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '0.5rem' }}>
+      {tiles.map(t => (
+        <div key={t.label} style={{
+          background: 'var(--bg-primary)',
+          border: `1px solid var(--border-color)`,
+          borderRadius: 'var(--radius-lg)',
+          padding: '1.25rem 1.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem',
+          boxShadow: 'var(--shadow-sm)',
+          transition: 'var(--transition)',
+        }}
+          onMouseEnter={e => { e.currentTarget.style.boxShadow = 'var(--shadow-md)'; e.currentTarget.style.borderColor = t.border; }}
+          onMouseLeave={e => { e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+        >
+          <div style={{
+            width: '48px', height: '48px', borderRadius: 'var(--radius-md)',
+            background: t.bg, border: `1px solid ${t.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, color: t.color,
+          }}>
+            {t.icon}
+          </div>
+          <div>
+            <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 800, color: t.value > 0 ? t.color : 'var(--text-primary)', lineHeight: 1 }}>
+              {t.value}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-primary)', marginTop: '0.25rem' }}>
+              {t.label}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: '0.125rem' }}>
+              {t.desc}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section 2: Security Response
+// All-time restriction event counters + current state
+// ─────────────────────────────────────────────────────────────
+function SecurityResponseSection({ data }) {
+  const rows = [
+    {
+      label: 'ML Automatic Restrictions',
+      value: data?.mlAutoRestrictions   ?? '—',
+      icon:  <FiCpu size={16} />,
+      color: 'var(--purple, #7c3aed)',
+      bg:    'rgba(139,92,246,0.08)',
+      desc:  'Triggered by LSTM HIGH-risk prediction',
+    },
+    {
+      label: 'Authentication Rule Restrictions',
+      value: data?.authRuleRestrictions ?? '—',
+      icon:  <FiAlertCircle size={16} />,
+      color: 'var(--info)',
+      bg:    'var(--info-light)',
+      desc:  'Triggered by repeated failed-login threshold',
+    },
+    {
+      label: 'Manual Admin Restrictions',
+      value: data?.manualRestrictions   ?? '—',
+      icon:  <FiUserCheck size={16} />,
+      color: 'var(--warning)',
+      bg:    'var(--warning-light)',
+      desc:  'Applied manually by an administrator',
+    },
+    {
+      label: 'Restrictions Released',
+      value: data?.restrictionsReleased ?? '—',
+      icon:  <FiUnlock size={16} />,
+      color: 'var(--success)',
+      bg:    'var(--success-light)',
+      desc:  'Manually released by admin',
+    },
+    {
+      label: 'Currently Restricted',
+      value: data?.currentlyRestricted  ?? '—',
+      icon:  <FiLock size={16} />,
+      color: data?.currentlyRestricted > 0 ? 'var(--danger)' : 'var(--success)',
+      bg:    data?.currentlyRestricted > 0 ? 'var(--danger-light)' : 'var(--success-light)',
+      desc:  'Active blocks right now',
+    },
+  ];
+
+  return (
+    <div style={{
+      background: 'var(--bg-primary)',
+      border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+      boxShadow: 'var(--shadow-sm)',
+      marginBottom: '0.5rem',
+    }}>
+      {rows.map((row, i) => (
+        <div key={row.label} style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '1rem 1.5rem',
+          borderBottom: i < rows.length - 1 ? '1px solid var(--border-color)' : 'none',
+          transition: 'var(--transition)',
+        }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: 'var(--radius-md)',
+              background: row.bg, color: row.color,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              {row.icon}
+            </div>
+            <div>
+              <div style={{ fontSize: 'var(--font-size-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {row.label}
+              </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: '0.125rem' }}>
+                {row.desc}
+              </div>
+            </div>
+          </div>
+          <div style={{
+            fontSize: 'var(--font-size-xl)',
+            fontWeight: 800,
+            color: row.color,
+            minWidth: '2.5rem',
+            textAlign: 'right',
+          }}>
+            {row.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section 3: Recent Security Activity
+// Last 20 security-relevant events across all users
+// ─────────────────────────────────────────────────────────────
+function RecentSecurityActivity({ rows }) {
+  const formatTs = (ts) => {
+    if (!ts) return '—';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return '—';
+      return new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit', month: 'short',
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      }).format(d).replace(',', '');
+    } catch { return '—'; }
+  };
+
+  const EVENT_META = {
+    login: {
+      label: 'Login Success',
+      icon:  <FiLogIn size={14} />,
+      color: 'var(--success)',
+      bg:    'var(--success-light)',
+    },
+    login_failed: {
+      label: 'Login Failed',
+      icon:  <FiAlertTriangle size={14} />,
+      color: 'var(--danger)',
+      bg:    'var(--danger-light)',
+    },
+    threat_detected: {
+      label: 'Threat Detected',
+      icon:  <FiAlertCircle size={14} />,
+      color: 'var(--warning)',
+      bg:    'var(--warning-light)',
+    },
+    user_restricted: {
+      label: 'Account Restricted',
+      icon:  <FiLock size={14} />,
+      color: 'var(--danger)',
+      bg:    'var(--danger-light)',
+    },
+    restriction_released: {
+      label: 'Restriction Released',
+      icon:  <FiUnlock size={14} />,
+      color: 'var(--success)',
+      bg:    'var(--success-light)',
+    },
+    password_reset_requested: {
+      label: 'Password Reset Requested',
+      icon:  <FiKey size={14} />,
+      color: 'var(--info)',
+      bg:    'var(--info-light)',
+    },
+    password_reset_completed: {
+      label: 'Password Reset Completed',
+      icon:  <FiKey size={14} />,
+      color: 'var(--success)',
+      bg:    'var(--success-light)',
+    },
+  };
+
+  if (!rows || rows.length === 0) {
+    return (
+      <div style={{
+        background: 'var(--bg-primary)', border: '1px solid var(--border-color)',
+        borderRadius: 'var(--radius-lg)', padding: '2rem',
+        textAlign: 'center', color: 'var(--text-muted)',
+        fontSize: 'var(--font-size-base)', boxShadow: 'var(--shadow-sm)',
+        marginBottom: '0.5rem',
+      }}>
+        No recent security events
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      background: 'var(--bg-primary)',
+      border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+      boxShadow: 'var(--shadow-sm)',
+      marginBottom: '0.5rem',
+    }}>
+      {rows.map((row, i) => {
+        const meta = EVENT_META[row.event_type] || {
+          label: row.event_type,
+          icon:  <FiActivity size={14} />,
+          color: 'var(--text-secondary)',
+          bg:    'var(--bg-secondary)',
+        };
+        return (
+          <div key={row.id || i} style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1rem',
+            padding: '0.875rem 1.5rem',
+            borderBottom: i < rows.length - 1 ? '1px solid var(--border-color)' : 'none',
+            transition: 'var(--transition)',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            {/* Event type badge */}
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.3rem 0.7rem',
+              borderRadius: '999px',
+              background: meta.bg,
+              color: meta.color,
+              fontSize: 'var(--font-size-xs)',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              minWidth: '155px',
+              justifyContent: 'center',
+            }}>
+              {meta.icon}
+              {meta.label}
+            </div>
+
+            {/* Email */}
+            <span style={{
+              fontSize: 'var(--font-size-sm)',
+              color: 'var(--text-primary)',
+              fontWeight: 500,
+              flex: '0 0 auto',
+              minWidth: '180px',
+              maxWidth: '220px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontFamily: 'monospace',
+            }}>
+              {row.user_email}
+            </span>
+
+            {/* Details */}
+            <span style={{
+              fontSize: 'var(--font-size-xs)',
+              color: 'var(--text-muted)',
+              flex: 1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }} title={row.details}>
+              {row.details || '—'}
+            </span>
+
+            {/* IP */}
+            {row.ip_address && row.ip_address !== '—' && (
+              <span style={{
+                fontSize: 'var(--font-size-xs)',
+                color: 'var(--text-muted)',
+                fontFamily: 'monospace',
+                flexShrink: 0,
+              }}>
+                {row.ip_address}
+              </span>
+            )}
+
+            {/* Timestamp */}
+            <span style={{
+              fontSize: 'var(--font-size-xs)',
+              color: 'var(--text-secondary)',
+              flexShrink: 0,
+              minWidth: '120px',
+              textAlign: 'right',
+            }}>
+              {formatTs(row.timestamp)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

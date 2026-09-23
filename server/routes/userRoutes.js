@@ -17,11 +17,12 @@ const {
   listUsers,
   deleteUser,
   updateRole,
-  restrictUser,              // MODULE 1: New
-  releaseRestriction,        // MODULE 1: New
+  restrictUser,
+  releaseRestriction,
   getUserStats,
   getAdminStats,
   getUserActivitySummary,
+  getAdminSecuritySummary,
 } = require('../controllers/userController');
 
 // All user routes require a valid JWT
@@ -31,12 +32,13 @@ router.use(protect);
 router.get('/stats', getUserStats);
 
 // Admin-only routes
-router.get('/',                  adminOnly, listUsers);
-router.get('/activity-summary',  adminOnly, getUserActivitySummary);
-router.delete('/:id',            adminOnly, deleteUser);
-router.patch('/:id/role',        adminOnly, updateRole);
-router.patch('/:id/restrict',    adminOnly, restrictUser);      // MODULE 1: New
-router.patch('/:id/release',     adminOnly, releaseRestriction); // MODULE 1: New
-router.get('/admin/stats',       adminOnly, getAdminStats);
+router.get('/',                          adminOnly, listUsers);
+router.get('/activity-summary',          adminOnly, getUserActivitySummary);
+router.get('/admin/stats',               adminOnly, getAdminStats);
+router.get('/admin/security-summary',    adminOnly, getAdminSecuritySummary);
+router.delete('/:id',                    adminOnly, deleteUser);
+router.patch('/:id/role',                adminOnly, updateRole);
+router.patch('/:id/restrict',            adminOnly, restrictUser);
+router.patch('/:id/release',             adminOnly, releaseRestriction);
 
 module.exports = router;
