@@ -18,11 +18,12 @@ const userNav = [
 ];
 
 const adminNav = [
-  { to: '/admin',               label: 'Admin Home',    Icon: FiShield },
-  { to: '/admin/users',         label: 'User Mgmt',     Icon: FiUsers },
-  { to: '/admin/user-activity', label: 'User Activity', Icon: FiActivity },
-  { to: '/admin/logs',          label: 'Activity Logs', Icon: FiFileText },
-  { to: '/threats',             label: 'Threats',       Icon: FiAlertTriangle },
+  { to: '/admin',                      label: 'Admin Home',           Icon: FiShield },
+  { to: '/admin/users',                label: 'User Mgmt',            Icon: FiUsers },
+  { to: '/admin/user-activity',        label: 'User Activity',        Icon: FiActivity },
+  { to: '/admin/logs',                 label: 'Activity Logs',        Icon: FiFileText },
+  { to: '/threats',                    label: 'Threats',              Icon: FiAlertTriangle },
+  { to: '/admin/blockchain-integrity', label: 'Blockchain Integrity', Icon: FiShield },
 ];
 
 const EXPANDED = 224;

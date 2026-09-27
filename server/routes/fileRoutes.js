@@ -11,7 +11,7 @@
 
 const router = require('express').Router();
 const multer = require('multer');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, requireAdmin } = require('../middleware/authMiddleware');
 const {
   uploadFile,
   getFiles,
@@ -19,6 +19,10 @@ const {
   getFileContent,
   downloadFile,
   deleteFile,
+  verifyFileIntegrityEndpoint,
+  getFileHistoryEndpoint,
+  getAdminBlockchainFiles,
+  getIntegrityFailures,
 } = require('../controllers/fileController');
 
 // Store files in memory so we can pass the buffer directly to the S3 SDK
@@ -42,12 +46,20 @@ const upload  = multer({
 // All file routes require authentication
 router.use(protect);
 
+// Admin-only routes
+router.get('/admin/blockchain', requireAdmin, getAdminBlockchainFiles);
+router.get('/admin/integrity-failures', requireAdmin, getIntegrityFailures);
+
 router.post('/upload',          upload.single('file'), uploadFile);
 router.get('/',                 getFiles);
 router.get('/preview/:key',     previewFile);
 router.get('/content/:key',     getFileContent);
 router.get('/download/:key',    downloadFile);
 router.delete('/:key',          deleteFile);
+
+// Integrity verification endpoints
+router.post('/verify/:key',     verifyFileIntegrityEndpoint);
+router.get('/history/:key',     getFileHistoryEndpoint);
 
 module.exports = router;
 

@@ -179,18 +179,47 @@ async function logThreat({ userId, userEmail, attack_type, risk_level, confidenc
 
 /**
  * Save S3 file metadata to Firestore after a successful upload.
+ *
+ * Optional fields default to null so existing records without them
+ * remain fully readable — no schema migration needed.
+ *
+ * @param {object} params
+ * @param {string} params.userId
+ * @param {string} params.userEmail
+ * @param {string} params.key          — S3 object key
+ * @param {string} params.name         — original filename
+ * @param {number} params.size         — file size in bytes
+ * @param {string} params.mimeType
+ * @param {string} params.s3Url        — base (unsigned) S3 URL
+ * @param {string} [params.s3VersionId] — S3 VersionId (null if versioning off)
+ * @param {string} [params.sha256]      — 64-char hex SHA-256 of the file bytes
+ * @param {string} [params.blockchainStatus] — 'recorded' or 'failed'
  */
-async function saveFileMetadata({ userId, userEmail, key, name, size, mimeType, s3Url }) {
+async function saveFileMetadata({
+  userId,
+  userEmail,
+  key,
+  name,
+  size,
+  mimeType,
+  s3Url,
+  s3VersionId = null,
+  sha256      = null,
+  blockchainStatus = null,
+}) {
   try {
     const docRef = await db.collection(COLLECTIONS.FILE_METADATA).add({
       userId,
-      user_email: userEmail,
+      user_email:  userEmail,
       key,
       name,
       size,
       mimeType,
       s3Url,
-      uploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+      s3VersionId,      // null when bucket versioning is not enabled
+      sha256,           // null for records created before this feature was added
+      blockchainStatus, // null for records created before blockchain integration
+      uploadedAt:       admin.firestore.FieldValue.serverTimestamp(),
     });
     return docRef.id;
   } catch (err) {

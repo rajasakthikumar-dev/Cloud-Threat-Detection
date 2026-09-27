@@ -1,0 +1,19 @@
+{
+    "name": "file-integrity",
+    "version": "1.0.0",
+    "description": "File integrity chaincode for AI Threat Detection — stores immutable SHA-256 + S3 VersionId records",
+    "main": "index.js",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "start": "fabric-chaincode-node start"
+    },
+    "license": "Apache-2.0",
+    "dependencies": {
+        "fabric-contract-api": "~2.5",
+        "fabric-shim": "~2.5",
+        "json-stringify-deterministic": "^1.0.0",
+        "sort-keys-recursive": "^2.1.0"
+    }
+}

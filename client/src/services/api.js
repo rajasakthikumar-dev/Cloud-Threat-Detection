@@ -26,13 +26,11 @@ const api = axios.create({
 });
 
 /**
- * CRITICAL FIX: Get current session ID from DOM
- * Each tab has a unique session ID stored in the React component tree.
- * We retrieve it from the window object where App.js will attach it.
+ * CRITICAL FIX: Get current session ID from sessionStorage
+ * Each tab has a unique session ID that persists across page refreshes.
  */
 function getSessionId() {
-  // The session ID is set by App.js via a custom event
-  return window.__KIRO_SESSION_ID__ || null;
+  return sessionStorage.getItem('kiro_session_id') || null;
 }
 
 /**
@@ -171,6 +169,26 @@ export const getFileContent = (key) =>
 /** DELETE /files/:key — delete a file from S3 */
 export const deleteFile = (key) =>
   api.delete(`/files/${encodeURIComponent(key)}`);
+
+// ════════════════════════════════════════════════════════════
+// BLOCKCHAIN INTEGRITY
+// ════════════════════════════════════════════════════════════
+
+/** GET /files/admin/blockchain — get all blockchain-protected files (admin only) */
+export const getAdminBlockchainFiles = () =>
+  api.get('/files/admin/blockchain');
+
+/** GET /files/admin/integrity-failures — get all integrity failure events (admin only) */
+export const getIntegrityFailures = () =>
+  api.get('/files/admin/integrity-failures');
+
+/** POST /files/verify/:key — verify file integrity against blockchain record */
+export const verifyFileIntegrity = (key) =>
+  api.post(`/files/verify/${encodeURIComponent(key)}`);
+
+/** GET /files/history/:key — get blockchain version history for a file */
+export const getFileHistory = (key) =>
+  api.get(`/files/history/${encodeURIComponent(key)}`);
 
 // ════════════════════════════════════════════════════════════
 // USERS  (Admin only)

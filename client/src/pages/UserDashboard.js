@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FiFolder, FiActivity, FiClock, FiArrowRight } from 'react-icons/fi';
+import { FiFolder, FiShield, FiCheckCircle, FiAlertTriangle, FiArrowRight } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
@@ -8,18 +8,22 @@ import { useAuth } from '../App';
 import { getUserStats } from '../services/api';
 
 /**
- * UserDashboard - user's personal overview with file and threat stats
- * FIXED: Added auth initialization check, professional light theme
+ * UserDashboard - simplified user's personal overview with file and integrity stats
  */
 
 export default function UserDashboard() {
   const { user, initializing }  = useAuth();
-  const [stats,   setStats]   = useState({ files: 0, threats: 0, lastScan: '—' });
+  const [stats,   setStats]   = useState({ 
+    files: 0, 
+    blockchainProtected: 0,
+    integrityVerified: 0,
+    integrityFailures: 0
+  });
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    // FIX: Wait for auth to initialize
+    // Wait for auth to initialize
     if (initializing) return;
     
     async function fetchData() {
@@ -29,8 +33,9 @@ export default function UserDashboard() {
         const d = res.data;
         setStats({ 
           files: d.myFiles || 0, 
-          threats: d.myThreats || 0, 
-          lastScan: d.lastScan || '—' 
+          blockchainProtected: d.blockchainProtected || 0,
+          integrityVerified: d.integrityVerified || 0,
+          integrityFailures: d.integrityFailures || 0
         });
       } catch (err) {
         setError(err.response?.data?.message || 'Failed to load dashboard data.');
@@ -59,12 +64,25 @@ export default function UserDashboard() {
               Welcome, {user?.name?.split(' ')[0] || 'User'} 👋
             </h1>
             <p style={{ fontSize: 'var(--font-size-lg)', color: 'var(--text-secondary)', fontWeight: 500 }}>
-              Your personal security dashboard — manage files and monitor account activity
+              Your personal security dashboard — manage your secure cloud files and verify their integrity.
             </p>
           </div>
 
+          {error && (
+            <div style={{
+              background: 'var(--danger-bg)',
+              border: '1px solid var(--danger)',
+              borderRadius: 'var(--radius-md)',
+              padding: '1rem',
+              marginBottom: '1.5rem',
+              color: 'var(--danger)',
+            }}>
+              {error}
+            </div>
+          )}
+
           {/* KPI Cards */}
-          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
             <DashboardCard 
               title="My Files" 
               value={stats.files} 
@@ -73,18 +91,25 @@ export default function UserDashboard() {
               subtitle="Stored in cloud" 
             />
             <DashboardCard 
-              title="Threats Detected" 
-              value={stats.threats} 
-              icon={<FiActivity />} 
-              color="var(--danger)" 
-              subtitle="On your account" 
+              title="Blockchain Protected" 
+              value={stats.blockchainProtected} 
+              icon={<FiShield />} 
+              color="var(--primary)" 
+              subtitle="Tamper-proof files" 
             />
             <DashboardCard 
-              title="Last Scan" 
-              value={stats.lastScan} 
-              icon={<FiClock />} 
-              color="var(--purple)" 
-              subtitle="Most recent analysis" 
+              title="Integrity Verified" 
+              value={stats.integrityVerified} 
+              icon={<FiCheckCircle />} 
+              color="var(--success)" 
+              subtitle="Successfully verified" 
+            />
+            <DashboardCard 
+              title="Integrity Failures" 
+              value={stats.integrityFailures} 
+              icon={<FiAlertTriangle />} 
+              color="var(--danger)" 
+              subtitle="Hash mismatches detected" 
             />
           </div>
 
@@ -144,48 +169,7 @@ export default function UserDashboard() {
               </div>
             </Link>
 
-            <div style={{
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--border-color)',
-              borderRadius: 'var(--radius-lg)',
-              padding: '1.75rem 2rem',
-              boxShadow: 'var(--shadow-md)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <div style={{ 
-                  width: '52px', 
-                  height: '52px', 
-                  borderRadius: 'var(--radius-lg)', 
-                  background: 'var(--purple)', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  boxShadow: 'var(--shadow-md)' 
-                }}>
-                  <FiActivity size={26} color="white" />
-                </div>
-              </div>
-              <h3 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.625rem' }}>
-                AI Threat Protection
-              </h3>
-              <p style={{ fontSize: 'var(--font-size-base)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                Automated LSTM-powered threat detection actively monitors and safeguards your account in real time.
-              </p>
-            </div>
-
           </div>
-
-          {loading && !error && (
-            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', marginTop: '3rem', fontSize: 'var(--font-size-base)' }}>
-              Loading dashboard data...
-            </p>
-          )}
-          
-          {error && (
-            <p style={{ textAlign: 'center', color: 'var(--danger)', marginTop: '3rem', fontSize: 'var(--font-size-base)' }}>
-              {error}
-            </p>
-          )}
         </main>
       </div>
     </div>

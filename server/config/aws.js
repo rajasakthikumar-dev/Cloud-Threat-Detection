@@ -62,12 +62,16 @@ function buildKey(userId, originalName) {
  * @param {string} originalName — original file name
  * @param {string} mimeType     — MIME type
  *
- * @returns {{ key, url, size }}
+ * @returns {{ key, url, size, versionId }}
+ *   versionId is the S3 VersionId returned by AWS when bucket versioning
+ *   is enabled. It will be null/undefined if versioning is suspended.
  */
 async function uploadToS3(buffer, userId, originalName, mimeType) {
   const key = buildKey(userId, originalName);
 
-  await s3Client.send(new PutObjectCommand({
+  // Capture the full PutObject response — VersionId is in here when
+  // S3 bucket versioning is enabled.
+  const putResponse = await s3Client.send(new PutObjectCommand({
     Bucket:      BUCKET,
     Key:         key,
     Body:        buffer,
@@ -80,8 +84,18 @@ async function uploadToS3(buffer, userId, originalName, mimeType) {
     },
   }));
 
+  // putResponse.VersionId is set by AWS when bucket versioning is enabled.
+  // It is undefined/null when versioning is suspended or not enabled.
+  const versionId = putResponse.VersionId || null;
+
+  if (versionId) {
+    console.log(`[aws.uploadToS3] key=${key} VersionId=${versionId}`);
+  } else {
+    console.warn('[aws.uploadToS3] No VersionId in PutObject response — is S3 versioning enabled on the bucket?');
+  }
+
   const url = `https://${BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-  return { key, url, size: buffer.length };
+  return { key, url, size: buffer.length, versionId };
 }
 
 /**

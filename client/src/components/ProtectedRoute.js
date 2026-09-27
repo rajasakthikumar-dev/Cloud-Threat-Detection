@@ -10,15 +10,23 @@ import { getMe } from '../services/api';
  *   1. Authentication check  — redirects to /login if not logged in
  *   2. Role check            — redirects to /dashboard if wrong role
  *   3. Restriction polling   — periodically calls GET /auth/me so that
- *      a restriction applied in another tab/session is detected within
- *      ~30 seconds without requiring a page refresh.
+ *      a restriction applied by admin is detected within ~30 seconds
+ *      without requiring a page refresh.
  *
- * The api.js interceptor handles the IMMEDIATE case: any 403
- * ACCOUNT_RESTRICTED response on any request redirects instantly.
- * The poll here handles the case where the user is idle (no requests
- * being made) and an admin restricts them in another tab.
+ * WHY 30-SECOND POLLING IS INTENTIONAL:
+ * - If admin restricts a user's account, the user should be redirected to
+ *   /restricted within 30 seconds, even if they're idle (no API calls).
+ * - The api.js interceptor handles IMMEDIATE restriction detection on any
+ *   API call that returns 403 ACCOUNT_RESTRICTED.
+ * - This poll handles the case where user is idle (no requests being made).
  *
- * Poll interval: 30 seconds (light — GET /auth/me is a single Firestore read)
+ * RATE LIMITING:
+ * - GET /auth/me uses sessionLimiter (50 per 15 min) in server.js
+ * - This is separate from authLimiter (20 per 15 min) used for login
+ * - 30-second polling = ~30 requests per 15 min (well under 50 limit)
+ * - Login/password operations remain protected by strict rate limiting
+ *
+ * Poll interval: 30 seconds
  * The poll is stopped when the component unmounts (page navigation / logout).
  */
 

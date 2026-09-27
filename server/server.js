@@ -103,15 +103,32 @@ const globalLimiter = rateLimit({
 app.use(globalLimiter);
 
 // Stricter limiter for auth endpoints — 20 attempts per 15 minutes
+// Applied ONLY to login/register/password operations, NOT to session validation
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   message: { message: 'Too many auth attempts. Please wait before retrying.' },
 });
 
+// Session validation limiter — more generous for GET /auth/me polling
+// Allows 50 requests per 15 minutes (safely covers 30-second polling)
+const sessionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many session validation requests.' },
+});
+
 // ─────────────────────────────────────────────────────────────
 // API ROUTES
 // ─────────────────────────────────────────────────────────────
+// Mount /auth/me separately with session limiter (allows polling)
+const { protect } = require('./middleware/authMiddleware');
+const { getMe } = require('./controllers/authController');
+app.get('/api/auth/me', sessionLimiter, protect, getMe);
+
+// Mount other auth routes with strict auth limiter
 app.use('/api/auth',    authLimiter, authRoutes);
 app.use('/api/files',   fileRoutes);
 app.use('/api/users',   userRoutes);

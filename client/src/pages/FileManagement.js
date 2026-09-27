@@ -2,13 +2,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   FiFolder, FiDownload, FiTrash2, FiSearch, FiEye, FiX,
   FiFileText, FiAlertCircle, FiRefreshCw, FiImage, FiCode,
-  FiFile, FiCloud,
+  FiFile, FiCloud, FiShield,
 } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import FileUpload from '../components/FileUpload';
-import { getFiles, deleteFile, getFileUrl, getFilePreview, getFileContent } from '../services/api';
+import { getFiles, deleteFile, getFileUrl, getFilePreview, getFileContent, verifyFileIntegrity } from '../services/api';
 
 /* ── All handlers identical to original ─────────────────────── */
 
@@ -55,6 +55,7 @@ export default function FileManagement() {
   const [previewUrl,     setPreviewUrl]     = useState('');
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [verifying,      setVerifying]      = useState(null);
 
   const fetchFiles = useCallback(async () => {
     try {
@@ -102,6 +103,24 @@ export default function FileManagement() {
 
   const closePreview = () => { setPreviewFileState(null); setPreviewUrl(''); setPreviewContent(''); setPreviewLoading(false); };
   const handleUploadSuccess = () => { fetchFiles(); };
+
+  const handleVerifyIntegrity = async (file) => {
+    setVerifying(file.key);
+    try {
+      const res = await verifyFileIntegrity(file.key);
+      const verification = res.data.verification;
+      
+      if (verification.match) {
+        toast.success(`✓ ${file.name} — Integrity Verified`, { autoClose: 4000 });
+      } else {
+        toast.error(`✗ ${file.name} — Integrity Alert: Hash Mismatch!`, { autoClose: 6000 });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Verification failed');
+    } finally {
+      setVerifying(null);
+    }
+  };
 
   const filtered = files.filter(f => f.name?.toLowerCase().includes(search.toLowerCase()));
 
@@ -206,6 +225,12 @@ export default function FileManagement() {
                             {iconBtn('#0ea5e9', () => handlePreview(f),        'Preview',  FiEye)}
                             {iconBtn('#22c55e', () => handleDownload(f.key, f.name), 'Download', FiDownload)}
                             {iconBtn('#ef4444', () => handleDelete(f.key, f.name),  'Delete',   FiTrash2)}
+                            {f.blockchainStatus === 'recorded' && iconBtn(
+                              '#8b5cf6',
+                              () => handleVerifyIntegrity(f),
+                              verifying === f.key ? 'Verifying...' : 'Verify Integrity',
+                              FiShield
+                            )}
                           </span>
                         </td>
                       </tr>

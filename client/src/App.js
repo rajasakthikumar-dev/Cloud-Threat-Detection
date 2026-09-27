@@ -16,6 +16,7 @@ import ActivityLogs   from './pages/ActivityLogs';
 import RestrictedPage from './pages/RestrictedPage';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword  from './pages/ResetPassword';
+import BlockchainIntegrity from './pages/BlockchainIntegrity';
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute';
@@ -48,10 +49,16 @@ export function useSocket() {
 
 /**
  * Generate a unique session ID for this browser tab.
- * Each tab gets its own session to prevent cross-contamination.
+ * CRITICAL: Use sessionStorage to persist the ID across page refreshes within the same tab.
+ * Each tab gets its own isolated session, but refreshing within a tab preserves the session.
  */
-function generateSessionId() {
-  return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+function getOrCreateSessionId() {
+  let sessionId = sessionStorage.getItem('kiro_session_id');
+  if (!sessionId) {
+    sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    sessionStorage.setItem('kiro_session_id', sessionId);
+  }
+  return sessionId;
 }
 
 // ─────────────────────────────────────────────
@@ -62,22 +69,22 @@ function App() {
   const [socket, setSocket]       = useState(null);
   const [initializing, setInitializing] = useState(true);
   
-  // CRITICAL FIX: Each tab gets a unique session ID
-  // This prevents cross-tab session contamination
+  // CRITICAL FIX: Each tab gets a unique session ID that persists across refreshes
+  // sessionStorage persists within a tab but not across tabs
   const sessionIdRef = useRef(null);
   
   if (!sessionIdRef.current) {
-    sessionIdRef.current = generateSessionId();
+    sessionIdRef.current = getOrCreateSessionId();
   }
   
   const sessionId = sessionIdRef.current;
 
-  // CRITICAL FIX: Storage keys are now per-session
+  // Storage keys are per-session to prevent cross-tab contamination
   const getUserKey = () => `user_${sessionId}`;
   const getTokenKey = () => `token_${sessionId}`;
 
-  // Rehydrate auth state from localStorage on first load
-  // FIXED: Use session-specific keys
+  // Rehydrate auth state from localStorage on mount
+  // This MUST complete before we set initializing=false
   useEffect(() => {
     const stored = localStorage.getItem(getUserKey());
     if (stored) {
@@ -90,40 +97,34 @@ function App() {
         localStorage.removeItem(getTokenKey());
       }
     }
+    // Only mark initialization complete AFTER attempting restoration
     setInitializing(false);
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // CRITICAL FIX: Listen for storage events from OTHER tabs
-  // If another tab logs in/out, warn the user but don't auto-switch
+  // Warn user if another tab logs in with a different account
   useEffect(() => {
     const handleStorageChange = (e) => {
-      // Only react to changes from OTHER tabs (e.key is set for external changes)
-      if (!e.key) return;
+      // Only react to changes from OTHER tabs
+      if (!e.key || !e.key.startsWith('user_')) return;
       
-      // Check if a different session was created (another tab logged in)
-      if (e.key.startsWith('user_') && e.key !== getUserKey() && e.newValue) {
+      // Check if a different user logged in from another tab
+      if (e.newValue && user) {
         try {
           const otherUser = JSON.parse(e.newValue);
-          if (user && otherUser.email !== user.email) {
+          if (otherUser.email !== user.email) {
             toast.warning(
-              `Another user (${otherUser.email}) logged in from a different tab. ` +
-              `Your current session remains active.`,
-              { autoClose: 8000 }
+              `Another user (${otherUser.email}) logged in from a different tab.`,
+              { autoClose: 5000 }
             );
           }
         } catch { /* ignore */ }
-      }
-      
-      // If OUR session's data was removed (shouldn't happen, but handle it)
-      if (e.key === getUserKey() && !e.newValue && user) {
-        toast.error('Your session was cleared. Please log in again.');
-        setUser(null);
       }
     };
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [user, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Open Socket.io connection once user is authenticated
   useEffect(() => {
@@ -178,15 +179,6 @@ function App() {
     setUser(null);
   };
 
-  // CRITICAL FIX: Provide sessionId to context for API calls
-  // Also expose it globally for axios interceptors
-  useEffect(() => {
-    window.__KIRO_SESSION_ID__ = sessionId;
-    return () => {
-      delete window.__KIRO_SESSION_ID__;
-    };
-  }, [sessionId]);
-
   return (
     <AuthContext.Provider value={{ user, initializing, login, logout, sessionId }}>
       <SocketContext.Provider value={socket}>
@@ -202,11 +194,12 @@ function App() {
 
             {/* Admin-only routes */}
             <Route element={<ProtectedRoute requiredRole="admin" />}>
-              <Route path="/admin"               element={<AdminDashboard />} />
-              <Route path="/admin/users"         element={<UserManagement />} />
-              <Route path="/admin/user-activity" element={<UserActivity />} />
-              <Route path="/admin/logs"          element={<ActivityLogs />} />
-              <Route path="/threats"             element={<ThreatMonitoring />} />
+              <Route path="/admin"                      element={<AdminDashboard />} />
+              <Route path="/admin/users"                element={<UserManagement />} />
+              <Route path="/admin/user-activity"        element={<UserActivity />} />
+              <Route path="/admin/logs"                 element={<ActivityLogs />} />
+              <Route path="/threats"                    element={<ThreatMonitoring />} />
+              <Route path="/admin/blockchain-integrity" element={<BlockchainIntegrity />} />
             </Route>
 
             {/* Authenticated user routes (admin + user) */}

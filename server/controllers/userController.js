@@ -346,34 +346,119 @@ async function releaseRestriction(req, res) {
 async function getUserStats(req, res) {
   try {
     const userId = req.user.id;
+    const userEmail = req.user.email;
+    
+    console.log('[getUserStats] Called for userId:', userId, 'email:', userEmail);
 
-    // Count user's files
-    const filesSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+    // Count user's files - try both userId and userEmail for backwards compatibility
+    const filesByUserIdSnap = await db.collection(COLLECTIONS.FILE_METADATA)
       .where('userId', '==', userId).get();
+    
+    console.log('[getUserStats] Files by userId query returned:', filesByUserIdSnap.size, 'documents');
+    
+    // For backwards compatibility: also check by email if userId returns 0
+    let filesSnap = filesByUserIdSnap;
+    if (filesByUserIdSnap.size === 0 && userEmail) {
+      console.log('[getUserStats] Trying fallback query by user_email...');
+      const filesByEmailSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+        .where('user_email', '==', userEmail).get();
+      console.log('[getUserStats] Files by email query returned:', filesByEmailSnap.size, 'documents');
+      filesSnap = filesByEmailSnap;
+    }
+    
+    if (filesSnap.size > 0) {
+      filesSnap.docs.forEach(doc => {
+        const f = doc.data();
+        console.log('[getUserStats] File:', f.name, 'userId:', f.userId, 'userEmail:', f.user_email || f.userEmail);
+      });
+    }
 
-    // Count user's threats
-    const threatsSnap = await db.collection(COLLECTIONS.THREAT_LOGS)
-      .where('userId', '==', userId).get();
-
-    // Get most recent scan timestamp
-    const lastScanSnap = await db.collection(COLLECTIONS.THREAT_LOGS)
+    // Count user's blockchain-protected files
+    const blockchainFilesByUserIdSnap = await db.collection(COLLECTIONS.FILE_METADATA)
       .where('userId', '==', userId)
-      .orderBy('timestamp', 'desc')
-      .limit(1).get();
+      .where('blockchainStatus', '==', 'recorded')
+      .get();
+    
+    let blockchainFilesSnap = blockchainFilesByUserIdSnap;
+    if (blockchainFilesByUserIdSnap.size === 0 && userEmail) {
+      const blockchainFilesByEmailSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+        .where('user_email', '==', userEmail)
+        .where('blockchainStatus', '==', 'recorded')
+        .get();
+      blockchainFilesSnap = blockchainFilesByEmailSnap;
+    }
+    
+    console.log('[getUserStats] Blockchain-protected files:', blockchainFilesSnap.size);
 
-    const lastScan = lastScanSnap.empty
-      ? 'Never'
-      : lastScanSnap.docs[0].data().timestamp?.toDate()?.toLocaleDateString() || '—';
-
-    const threatCount = threatsSnap.size;
-    const status      = threatCount > 0 ? 'At Risk' : 'Secure';
-
-    return res.json({
-      myFiles:  filesSnap.size,
-      myThreats: threatCount,
-      lastScan,
-      status,
+    // Count UNIQUE files with successful verification (not verification events)
+    // Get all integrity_verified events for this user
+    const verifiedEventsByUserIdSnap = await db.collection(COLLECTIONS.ACTIVITY_LOGS)
+      .where('userId', '==', userId)
+      .where('event_type', '==', 'integrity_verified')
+      .get();
+    
+    let verifiedEventsSnap = verifiedEventsByUserIdSnap;
+    if (verifiedEventsByUserIdSnap.size === 0 && userEmail) {
+      const verifiedEventsByEmailSnap = await db.collection(COLLECTIONS.ACTIVITY_LOGS)
+        .where('user_email', '==', userEmail)
+        .where('event_type', '==', 'integrity_verified')
+        .get();
+      verifiedEventsSnap = verifiedEventsByEmailSnap;
+    }
+    
+    // Extract unique file keys from verification events
+    const verifiedFileKeys = new Set();
+    verifiedEventsSnap.docs.forEach(doc => {
+      const event = doc.data();
+      if (event.metadata && event.metadata.key) {
+        verifiedFileKeys.add(event.metadata.key);
+      } else if (event.metadata && event.metadata.fileName) {
+        // Fallback: use fileName if key not available
+        verifiedFileKeys.add(event.metadata.fileName);
+      }
     });
+    
+    const uniqueVerifiedFilesCount = verifiedFileKeys.size;
+    console.log('[getUserStats] Unique verified files:', uniqueVerifiedFilesCount, '(from', verifiedEventsSnap.size, 'verification events)');
+
+    // Count UNIQUE files with integrity failures (not failure events)
+    const failureEventsByUserIdSnap = await db.collection(COLLECTIONS.ACTIVITY_LOGS)
+      .where('userId', '==', userId)
+      .where('event_type', '==', 'integrity_failure')
+      .get();
+    
+    let failureEventsSnap = failureEventsByUserIdSnap;
+    if (failureEventsByUserIdSnap.size === 0 && userEmail) {
+      const failureEventsByEmailSnap = await db.collection(COLLECTIONS.ACTIVITY_LOGS)
+        .where('user_email', '==', userEmail)
+        .where('event_type', '==', 'integrity_failure')
+        .get();
+      failureEventsSnap = failureEventsByEmailSnap;
+    }
+    
+    // Extract unique file keys from failure events
+    const failedFileKeys = new Set();
+    failureEventsSnap.docs.forEach(doc => {
+      const event = doc.data();
+      if (event.metadata && event.metadata.key) {
+        failedFileKeys.add(event.metadata.key);
+      } else if (event.metadata && event.metadata.fileName) {
+        failedFileKeys.add(event.metadata.fileName);
+      }
+    });
+    
+    const uniqueFailedFilesCount = failedFileKeys.size;
+    console.log('[getUserStats] Unique failed files:', uniqueFailedFilesCount, '(from', failureEventsSnap.size, 'failure events)');
+
+    const result = {
+      myFiles:  filesSnap.size,
+      blockchainProtected: blockchainFilesSnap.size,
+      integrityVerified: uniqueVerifiedFilesCount,
+      integrityFailures: uniqueFailedFilesCount,
+    };
+    
+    console.log('[getUserStats] Returning:', result);
+    return res.json(result);
   } catch (err) {
     console.error('[userController.getUserStats]', err);
     return res.status(500).json({ message: 'Failed to retrieve stats.' });
