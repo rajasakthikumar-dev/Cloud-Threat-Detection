@@ -206,4 +206,136 @@ async function sendPasswordResetEmail({ toEmail, toName, resetToken }) {
   console.log(`[emailService] Password-reset email sent to ${toEmail}`);
 }
 
-module.exports = { sendPasswordResetEmail };
+/**
+ * sendOTPEmail
+ * -------------
+ * Sends a 6-digit OTP to the user's registered email for password reset.
+ *
+ * @param {object} params
+ * @param {string} params.toEmail — recipient address (user's registered email)
+ * @param {string} params.toName  — user's display name
+ * @param {string} params.otp     — 6-digit OTP code (NEVER logged)
+ */
+async function sendOTPEmail({ toEmail, toName, otp }) {
+  const fromAddr   = process.env.MAIL_FROM  ||
+                     `"Secure Cloud Storage" <${process.env.SMTP_USER}>`;
+
+  const expiryMins = 5;
+
+  // ── Plain-text body ─────────────────────────────────────
+  const textBody = [
+    `Hi ${toName},`,
+    '',
+    'You requested a password reset for your Secure Cloud Storage account.',
+    '',
+    `Your verification code is: ${otp}`,
+    '',
+    `This code expires in ${expiryMins} minutes.`,
+    '',
+    'If you did not request this, please ignore this email.',
+    'Your password will not change unless you enter this code and create a new password.',
+    '',
+    '— Secure Cloud Storage Security Team',
+  ].join('\n');
+
+  // ── HTML body ───────────────────────────────────────────
+  const htmlBody = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Password Reset Verification Code</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 20px;">
+    <tr><td align="center">
+
+      <!-- Card -->
+      <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#1d4ed8,#2563eb);padding:32px 40px;text-align:center;">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:rgba(255,255,255,0.15);border-radius:12px;margin-bottom:16px;">
+              <!-- Shield icon (SVG inline) -->
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <div style="color:white;font-size:22px;font-weight:800;letter-spacing:-0.5px;">
+              Secure Cloud Storage
+            </div>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px;">
+            <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:#111827;">
+              Password Reset Code
+            </h1>
+            <p style="margin:0 0 24px;font-size:16px;color:#6b7280;line-height:1.6;">
+              Hi <strong style="color:#111827;">${toName}</strong>,
+            </p>
+            <p style="margin:0 0 28px;font-size:16px;color:#374151;line-height:1.6;">
+              You requested a password reset for your account. Enter this verification code to continue:
+            </p>
+
+            <!-- OTP Display -->
+            <div style="text-align:center;margin-bottom:28px;">
+              <div style="display:inline-block;background:#f0f9ff;border:2px solid #2563eb;border-radius:12px;padding:20px 40px;">
+                <div style="font-size:36px;font-weight:800;color:#1e40af;letter-spacing:8px;font-family:monospace;">
+                  ${otp}
+                </div>
+              </div>
+            </div>
+
+            <!-- Expiry notice -->
+            <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;margin-bottom:24px;">
+              <p style="margin:0;font-size:14px;color:#713f12;">
+                ⏰ This code expires in <strong>${expiryMins} minutes</strong>.
+              </p>
+            </div>
+
+            <!-- Security notice -->
+            <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6;
+                      border-top:1px solid #e5e7eb;padding-top:20px;">
+              If you didn't request a password reset, you can safely ignore this email.
+              Your password won't change unless you enter this code.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f9fafb;padding:20px 40px;text-align:center;
+                     border-top:1px solid #e5e7eb;">
+            <p style="margin:0;font-size:13px;color:#9ca3af;">
+              © ${new Date().getFullYear()} Secure Cloud Storage &nbsp;·&nbsp;
+              This is an automated security email — do not reply.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const transporter = getTransporter();
+
+  await transporter.sendMail({
+    from:    fromAddr,
+    to:      toEmail,
+    subject: 'Your Password Reset Code',
+    text:    textBody,
+    html:    htmlBody,
+  });
+
+  // Log that an email was sent — but NEVER log the OTP itself
+  console.log(`[emailService] OTP email sent to ${toEmail}`);
+}
+
+module.exports = { sendPasswordResetEmail, sendOTPEmail };

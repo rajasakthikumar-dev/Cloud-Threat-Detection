@@ -5,8 +5,9 @@
  * POST /api/auth/login             — sign in, receive JWT
  * POST /api/auth/logout            — record logout event (requires valid JWT)
  * GET  /api/auth/me                — get authenticated user profile
- * POST /api/auth/forgot-password   — request password reset email  (public)
- * POST /api/auth/reset-password    — submit new password with token (public)
+ * POST /api/auth/forgot-password   — request password reset OTP (public)
+ * POST /api/auth/verify-otp        — verify OTP before password reset (public)
+ * POST /api/auth/reset-password    — submit new password with OTP or token (public)
  *
  * RATE LIMITING STRATEGY:
  * - login/register/password operations use strict authLimiter (20 per 15 min)
@@ -20,6 +21,7 @@ const {
   logout,
   getMe,
   forgotPassword,
+  verifyOTP,
   resetPassword,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
@@ -34,6 +36,7 @@ const { protect } = require('../middleware/authMiddleware');
 router.post('/register',        register);
 router.post('/login',           login);
 router.post('/forgot-password', forgotPassword);
+router.post('/verify-otp',      verifyOTP);
 router.post('/reset-password',  resetPassword);
 
 // ── Authenticated endpoints ──────────────────────────────────

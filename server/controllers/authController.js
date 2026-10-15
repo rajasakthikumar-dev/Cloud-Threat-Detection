@@ -17,16 +17,22 @@ const {
   updateUser,
   savePasswordResetToken,
   validateAndConsumeResetToken,
+  saveOTP,
+  validateOTP,
+  deleteOTPsByEmail,
 } = require('../config/firebase');
 
 const { getClientInfo, formatClientInfo } = require('../utils/deviceParser');
-const { sendPasswordResetEmail }          = require('../services/emailService');
+const { sendPasswordResetEmail, sendOTPEmail } = require('../services/emailService');
 
 // Rule-based authentication monitor — separate from LSTM ML detection.
 const { checkBruteForce } = require('../utils/bruteForceMonitor');
 
-// Token expiry: 15 minutes
+// Token expiry: 15 minutes (kept for backward compatibility with token-based reset)
 const RESET_TOKEN_EXPIRY_MS = 15 * 60 * 1000;
+
+// OTP expiry: 5 minutes
+const OTP_EXPIRY_MS = 5 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────
 // REGISTER
@@ -249,7 +255,7 @@ async function getMe(req, res) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// FORGOT PASSWORD
+// FORGOT PASSWORD (OTP-based)
 // POST /api/auth/forgot-password
 // Public endpoint — no JWT required.
 //
@@ -258,7 +264,7 @@ async function getMe(req, res) {
 // ─────────────────────────────────────────────────────────────
 async function forgotPassword(req, res) {
   // Generic response sent in every case — success or not
-  const GENERIC_MSG = 'If an account with this email exists, a password reset link has been sent.';
+  const GENERIC_MSG = 'If an account with this email exists, a verification code has been sent.';
 
   try {
     const { email } = req.body;
@@ -274,39 +280,41 @@ async function forgotPassword(req, res) {
     // Whether user exists or not, we respond identically to the client.
     // Internal logic only runs when the user actually exists.
     if (user) {
-      // Generate a cryptographically secure random 32-byte token
-      const rawToken   = crypto.randomBytes(32).toString('hex');  // 64-char hex
-      const tokenHash  = crypto.createHash('sha256').update(rawToken).digest('hex');
-      const expiresAt  = new Date(Date.now() + RESET_TOKEN_EXPIRY_MS);
+      // Generate a cryptographically secure 6-digit OTP
+      const otp = crypto.randomInt(100000, 999999).toString();
+      
+      // Hash the OTP before storing
+      const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+      const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
 
-      // Store ONLY the hash — raw token never touches the database
-      await savePasswordResetToken({
-        tokenHash,
+      // Store ONLY the hash — raw OTP never touches the database
+      await saveOTP({
+        otpHash,
         userId:    user.id,
         email:     user.email,
         expiresAt,
       });
 
-      // Send the real email — raw token goes into the link, nowhere else
+      // Send the OTP via email
       try {
-        await sendPasswordResetEmail({
-          toEmail:    user.email,
-          toName:     user.name || 'User',
-          resetToken: rawToken,    // embedded in reset link only
+        await sendOTPEmail({
+          toEmail: user.email,
+          toName:  user.name || 'User',
+          otp,     // Only included in email, never logged or stored unhashed
         });
       } catch (emailErr) {
         // Email failure is logged server-side but hidden from the client
         // so that email-delivery errors don't leak user existence
         console.error('[authController.forgotPassword] Email send failed:', emailErr.message);
-        // Still return generic success — token was saved, user can retry
+        // Still return generic success — OTP was saved, user can retry
       }
 
-      // Activity log (no token value in details)
+      // Activity log (no OTP value in details)
       await logActivity({
         userId:     user.id,
         userEmail:  user.email,
-        event_type: 'password_reset_requested',
-        details:    `Password reset email requested`,
+        event_type: 'password_reset_otp_requested',
+        details:    `Password reset OTP requested`,
         ip_address: req.ip || '',
       });
     }
@@ -316,20 +324,141 @@ async function forgotPassword(req, res) {
   } catch (err) {
     console.error('[authController.forgotPassword]', err);
     // Return generic message even on internal error — don't expose details
-    return res.json({ message: 'If an account with this email exists, a password reset link has been sent.' });
+    return res.json({ message: 'If an account with this email exists, a verification code has been sent.' });
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// RESET PASSWORD
+// VERIFY OTP
+// POST /api/auth/verify-otp
+// Public endpoint — no JWT required.
+// Body: { email, otp }
+//
+// Validates the OTP without resetting the password.
+// Frontend can call this before showing the new password input
+// to provide immediate feedback on OTP validity.
+// ─────────────────────────────────────────────────────────────
+async function verifyOTP(req, res) {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and verification code are required.' });
+    }
+
+    if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ message: 'Invalid verification code format.' });
+    }
+
+    const normalised = email.toLowerCase().trim();
+    
+    // Hash the OTP to compare with stored hash
+    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+    
+    // Validate the OTP (this also increments attempt counter and marks as used if valid)
+    const record = await validateOTP(normalised, otpHash);
+
+    if (!record) {
+      return res.status(400).json({
+        message: 'Invalid or expired verification code. Please request a new one.',
+      });
+    }
+
+    // Log the verification
+    await logActivity({
+      userId:     record.userId,
+      userEmail:  record.email,
+      event_type: 'password_reset_otp_verified',
+      details:    `OTP verified successfully`,
+      ip_address: req.ip || '',
+    });
+
+    return res.json({ 
+      message: 'Verification code confirmed.',
+      email: record.email,
+    });
+  } catch (err) {
+    console.error('[authController.verifyOTP]', err);
+    return res.status(500).json({ message: 'OTP verification failed. Please try again.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESET PASSWORD (OTP-based)
 // POST /api/auth/reset-password
 // Public endpoint — no JWT required.
-// Body: { token, newPassword }
+// Body: { email, otp, newPassword }
 //
 // IMPORTANT: Password reset NEVER modifies restriction fields.
 // A restricted account remains restricted after password change.
 // ─────────────────────────────────────────────────────────────
 async function resetPassword(req, res) {
+  try {
+    const { email, otp, newPassword, token } = req.body;
+
+    // Support both OTP-based (new) and token-based (legacy) reset
+    // Token-based kept for backward compatibility
+    if (token) {
+      return resetPasswordWithToken(req, res);
+    }
+
+    // OTP-based reset (new flow)
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ message: 'Email, verification code, and new password are required.' });
+    }
+
+    if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ message: 'Invalid verification code format.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+    }
+
+    const normalised = email.toLowerCase().trim();
+    
+    // Hash the OTP to compare with stored hash
+    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+    
+    // Validate the OTP
+    const record = await validateOTP(normalised, otpHash);
+
+    if (!record) {
+      return res.status(400).json({
+        message: 'Invalid or expired verification code. Please request a new one.',
+      });
+    }
+
+    // Hash the new password with the same cost factor as registration
+    const salt         = await bcrypt.genSalt(12);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    // Update ONLY the password — never touch restriction fields
+    await updateUser(record.userId, { passwordHash });
+
+    // Delete all OTPs for this email to prevent reuse
+    await deleteOTPsByEmail(normalised);
+
+    // Activity log
+    await logActivity({
+      userId:     record.userId,
+      userEmail:  record.email,
+      event_type: 'password_reset_completed',
+      details:    `Password successfully reset via OTP`,
+      ip_address: req.ip || '',
+    });
+
+    return res.json({ message: 'Password reset successful. You can now log in with your new password.' });
+  } catch (err) {
+    console.error('[authController.resetPassword]', err);
+    return res.status(500).json({ message: 'Password reset failed. Please try again.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESET PASSWORD WITH TOKEN (Legacy - kept for backward compatibility)
+// ─────────────────────────────────────────────────────────────
+async function resetPasswordWithToken(req, res) {
   try {
     const { token, newPassword } = req.body;
 
@@ -361,10 +490,6 @@ async function resetPassword(req, res) {
     const passwordHash = await bcrypt.hash(newPassword, salt);
 
     // Update ONLY the password — never touch restriction fields.
-    // updateUser() does a Firestore .update() (partial merge) so all
-    // restriction-related fields (restricted, restrictionExpiry,
-    // restrictionReason, restrictionSource, etc.) are left completely
-    // unchanged on the user document.
     await updateUser(record.userId, { passwordHash });
 
     // Activity log
@@ -378,9 +503,9 @@ async function resetPassword(req, res) {
 
     return res.json({ message: 'Password reset successful. You can now log in with your new password.' });
   } catch (err) {
-    console.error('[authController.resetPassword]', err);
+    console.error('[authController.resetPasswordWithToken]', err);
     return res.status(500).json({ message: 'Password reset failed. Please try again.' });
   }
 }
 
-module.exports = { register, login, logout, getMe, forgotPassword, resetPassword };
+module.exports = { register, login, logout, getMe, forgotPassword, verifyOTP, resetPassword };

@@ -129,11 +129,15 @@ export const logoutUser = () =>
 export const getMe = () =>
   api.get('/auth/me');
 
-/** POST /auth/forgot-password — request a password-reset email (public, no token needed) */
+/** POST /auth/forgot-password — request password reset OTP (public, no token needed) */
 export const forgotPassword = (data) =>
   api.post('/auth/forgot-password', data);
 
-/** POST /auth/reset-password — submit new password with reset token (public) */
+/** POST /auth/verify-otp — verify OTP code (public, no token needed) */
+export const verifyOTP = (data) =>
+  api.post('/auth/verify-otp', data);
+
+/** POST /auth/reset-password — submit new password with OTP or token (public) */
 export const resetPassword = (data) =>
   api.post('/auth/reset-password', data);
 

@@ -93,6 +93,7 @@ const COLLECTIONS = {
   THREAT_LOGS:           'threat_logs',
   FILE_METADATA:         'file_metadata',
   PASSWORD_RESET_TOKENS: 'password_reset_tokens',
+  PASSWORD_RESET_OTPS:   'password_reset_otps',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -371,6 +372,132 @@ async function validateAndConsumeResetToken(tokenHash) {
   return { userId: data.userId, email: data.email };
 }
 
+// ─────────────────────────────────────────────────────────────
+// OTP-BASED PASSWORD RESET HELPERS
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Save an OTP (hashed) for password reset.
+ * 
+ * SECURITY: Only the SHA-256 hash of the OTP is stored, never the raw OTP.
+ * 
+ * @param {object} params
+ * @param {string} params.otpHash    — SHA-256 hex of the 6-digit OTP
+ * @param {string} params.userId     — Firestore user doc ID
+ * @param {string} params.email      — user's email (for lookup)
+ * @param {Date}   params.expiresAt  — expiry time (5 minutes from creation)
+ */
+async function saveOTP({ otpHash, userId, email, expiresAt }) {
+  await db.collection(COLLECTIONS.PASSWORD_RESET_OTPS).add({
+    otpHash,
+    userId,
+    email,
+    expiresAt:  admin.firestore.Timestamp.fromDate(expiresAt),
+    attempts:   0,
+    maxAttempts: 5,
+    used:       false,
+    createdAt:  admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Validate an OTP and mark it as used if valid.
+ * 
+ * Returns the OTP record with userId and email on success.
+ * Returns null if:
+ * - OTP hash not found
+ * - OTP already used
+ * - OTP expired
+ * - Max attempts exceeded
+ * 
+ * IMPORTANT: Increments attempt counter even on expiry to prevent timing attacks.
+ * 
+ * @param {string} email   — user's email address
+ * @param {string} otpHash — SHA-256 hex of the OTP entered by user
+ * @returns {object|null}  — { userId, email } or null
+ */
+async function validateOTP(email, otpHash) {
+  // Find the most recent unused OTP for this email
+  const snap = await db.collection(COLLECTIONS.PASSWORD_RESET_OTPS)
+    .where('email',  '==', email)
+    .where('otpHash', '==', otpHash)
+    .where('used',    '==', false)
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get();
+
+  if (snap.empty) return null;
+
+  const doc  = snap.docs[0];
+  const data = doc.data();
+  const now  = new Date();
+  const expiresAt = data.expiresAt?.toDate?.() || null;
+
+  // Check max attempts
+  if (data.attempts >= data.maxAttempts) {
+    return null;
+  }
+
+  // Increment attempt counter
+  await doc.ref.update({
+    attempts: admin.firestore.FieldValue.increment(1),
+  });
+
+  // Check expiry AFTER incrementing attempts to prevent timing attacks
+  if (!expiresAt || expiresAt <= now) {
+    return null;
+  }
+
+  // Mark as used
+  await doc.ref.update({ used: true });
+
+  return { userId: data.userId, email: data.email };
+}
+
+/**
+ * Increment OTP attempt counter for failed verification.
+ * Used when OTP is incorrect but not expired.
+ * 
+ * @param {string} email — user's email
+ */
+async function incrementOTPAttempts(email) {
+  try {
+    const snap = await db.collection(COLLECTIONS.PASSWORD_RESET_OTPS)
+      .where('email', '==', email)
+      .where('used',  '==', false)
+      .orderBy('createdAt', 'desc')
+      .limit(1)
+      .get();
+
+    if (!snap.empty) {
+      await snap.docs[0].ref.update({
+        attempts: admin.firestore.FieldValue.increment(1),
+      });
+    }
+  } catch (err) {
+    console.error('[Firebase] incrementOTPAttempts error:', err.message);
+  }
+}
+
+/**
+ * Delete all OTPs for a given email (used after successful password reset).
+ * 
+ * @param {string} email — user's email
+ */
+async function deleteOTPsByEmail(email) {
+  try {
+    const snap = await db.collection(COLLECTIONS.PASSWORD_RESET_OTPS)
+      .where('email', '==', email)
+      .get();
+    
+    const batch = db.batch();
+    snap.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  } catch (err) {
+    console.error('[Firebase] deleteOTPsByEmail error:', err.message);
+  }
+}
+
 module.exports = {
   admin,
   db,
@@ -387,7 +514,12 @@ module.exports = {
   getAllUsers,
   updateUser,
   deleteUserById,
-  // Password reset
+  // Password reset (token-based - deprecated, kept for backward compatibility)
   savePasswordResetToken,
   validateAndConsumeResetToken,
+  // Password reset (OTP-based - new)
+  saveOTP,
+  validateOTP,
+  incrementOTPAttempts,
+  deleteOTPsByEmail,
 };

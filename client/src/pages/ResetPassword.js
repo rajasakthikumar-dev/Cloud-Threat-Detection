@@ -5,8 +5,14 @@ import { toast } from 'react-toastify';
 import { resetPassword } from '../services/api';
 
 /**
- * ResetPassword
- * --------------
+ * ResetPassword (LEGACY - Token-based)
+ * -------------------------------------
+ * DEPRECATED: This page supports the old token-based password reset flow.
+ * New password resets use the OTP-based flow in ForgotPassword.js.
+ * 
+ * This page remains active for backward compatibility with existing reset
+ * emails that contain token-based links.
+ * 
  * Reads `?token=` from the URL — the raw token sent in the reset email.
  * Submits { token, newPassword } to POST /api/auth/reset-password.
  *
