@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
   FiShield, FiCheckCircle, FiAlertTriangle, FiFileText,
-  FiDatabase, FiLock, FiX, FiEye, FiClock, FiAlertCircle,
+  FiDatabase, FiLock, FiX, FiEye, FiClock, FiAlertCircle, FiRotateCcw,
 } from 'react-icons/fi';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
-import { getAdminBlockchainFiles, verifyFileIntegrity, getFileHistory, getIntegrityFailures } from '../services/api';
+import { getAdminBlockchainFiles, verifyFileIntegrity, getFileHistory, getIntegrityFailures, getAdminRecoveryHistory } from '../services/api';
 import { toast } from 'react-toastify';
 
 /**
@@ -17,6 +17,15 @@ export default function BlockchainIntegrity() {
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState([]);
   const [integrityFailures, setIntegrityFailures] = useState([]);
+  const [recoveryHistory, setRecoveryHistory] = useState([]);
+  const [recoveryStats, setRecoveryStats] = useState({
+    totalRecoveries: 0,
+    successfulRecoveries: 0,
+    failedRecoveries: 0,
+    blockchainRecorded: 0,
+    uniqueUsers: 0,
+    uniqueFiles: 0,
+  });
   const [stats, setStats] = useState({
     totalProtected: 0,
     blockchainRecorded: 0,
@@ -27,10 +36,12 @@ export default function BlockchainIntegrity() {
   const [verifying, setVerifying] = useState(null);
   const [viewingHistory, setViewingHistory] = useState(null);
   const [viewingFailure, setViewingFailure] = useState(null);
+  const [viewingRecovery, setViewingRecovery] = useState(null);
 
   useEffect(() => {
     fetchProtectedFiles();
     fetchIntegrityFailures();
+    fetchRecoveryHistory();
   }, []);
 
   async function fetchProtectedFiles() {
@@ -63,6 +74,23 @@ export default function BlockchainIntegrity() {
       setIntegrityFailures(res.data.failures || []);
     } catch (err) {
       console.error('Failed to load integrity failures:', err);
+    }
+  }
+
+  async function fetchRecoveryHistory() {
+    try {
+      const res = await getAdminRecoveryHistory();
+      setRecoveryHistory(res.data.recoveries || []);
+      setRecoveryStats(res.data.stats || {
+        totalRecoveries: 0,
+        successfulRecoveries: 0,
+        failedRecoveries: 0,
+        blockchainRecorded: 0,
+        uniqueUsers: 0,
+        uniqueFiles: 0,
+      });
+    } catch (err) {
+      console.error('Failed to load recovery history:', err);
     }
   }
 
@@ -328,6 +356,174 @@ export default function BlockchainIntegrity() {
           {/* Failure Details Modal */}
           {viewingFailure && (
             <FailureDetailsModal failure={viewingFailure} onClose={() => setViewingFailure(null)} />
+          )}
+
+          {/* Recovery History Section */}
+          {(recoveryHistory.length > 0 || recoveryStats.totalRecoveries > 0) && (
+            <>
+              <p style={{ ...sectionTitle, marginTop: '2.5rem' }}>File Recovery History</p>
+              
+              {/* Recovery Stats Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                <RecoveryStatCard
+                  label="Total Recoveries"
+                  value={recoveryStats.totalRecoveries}
+                  icon={<FiRotateCcw size={18} />}
+                  color="var(--warning)"
+                />
+                <RecoveryStatCard
+                  label="Successful"
+                  value={recoveryStats.successfulRecoveries}
+                  icon={<FiCheckCircle size={18} />}
+                  color="var(--success)"
+                />
+                <RecoveryStatCard
+                  label="Failed"
+                  value={recoveryStats.failedRecoveries}
+                  icon={<FiAlertTriangle size={18} />}
+                  color="var(--danger)"
+                />
+                <RecoveryStatCard
+                  label="Blockchain Audited"
+                  value={recoveryStats.blockchainRecorded}
+                  icon={<FiDatabase size={18} />}
+                  color="var(--info)"
+                />
+                <RecoveryStatCard
+                  label="Unique Users"
+                  value={recoveryStats.uniqueUsers}
+                  icon={<FiFileText size={18} />}
+                  color="var(--primary)"
+                />
+                <RecoveryStatCard
+                  label="Unique Files"
+                  value={recoveryStats.uniqueFiles}
+                  icon={<FiFileText size={18} />}
+                  color="var(--primary)"
+                />
+              </div>
+
+              {/* Recovery History Table */}
+              <div style={{
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-lg)',
+                overflow: 'hidden',
+                boxShadow: 'var(--shadow-md)',
+              }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead style={{ background: 'var(--bg-secondary)' }}>
+                      <tr>
+                        {['File Name', 'User', 'Recovery Date', 'Status', 'Blockchain', 'Details'].map(h => (
+                          <th key={h} style={{
+                            padding: '0.875rem 1rem',
+                            fontSize: 'var(--font-size-sm)',
+                            fontWeight: 700,
+                            color: 'var(--text-secondary)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            textAlign: 'left',
+                            borderBottom: '2px solid var(--border-color)',
+                          }}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recoveryHistory.map((recovery, idx) => (
+                        <tr key={recovery.id || idx} style={{ borderBottom: '1px solid var(--border-color)', transition: 'var(--transition)' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <FiFileText size={16} color="var(--warning)" />
+                              <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {recovery.fileName || 'Unknown'}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                            {recovery.userEmail || recovery.userId || '—'}
+                          </td>
+                          <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                            {recovery.recoveredAt || recovery.timestamp ? new Date(recovery.recoveredAt || recovery.timestamp).toLocaleString('en-GB', {
+                              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                            }) : '—'}
+                          </td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.375rem',
+                              padding: '0.25rem 0.75rem',
+                              borderRadius: 'var(--radius-md)',
+                              fontSize: 'var(--font-size-xs)',
+                              fontWeight: 600,
+                              background: recovery.status === 'success' ? 'var(--success-light)' : recovery.status === 'failed' ? 'var(--danger-light)' : 'var(--warning-light)',
+                              color: recovery.status === 'success' ? 'var(--success)' : recovery.status === 'failed' ? 'var(--danger)' : 'var(--warning)',
+                            }}>
+                              {recovery.status === 'success' ? <FiCheckCircle size={12} /> : <FiAlertTriangle size={12} />}
+                              {recovery.status?.toUpperCase() || 'UNKNOWN'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            {recovery.blockchainRecorded ? (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.375rem',
+                                fontSize: 'var(--font-size-xs)',
+                                fontWeight: 600,
+                                color: 'var(--success)',
+                              }}>
+                                <FiCheckCircle size={12} />
+                                Recorded
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                                —
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '0.875rem 1rem' }}>
+                            <button
+                              onClick={() => setViewingRecovery(recovery)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.375rem',
+                                padding: '0.375rem 0.875rem',
+                                borderRadius: 'var(--radius-md)',
+                                background: 'var(--primary-bg)',
+                                color: 'var(--primary)',
+                                border: '1px solid transparent',
+                                fontSize: 'var(--font-size-sm)',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                transition: 'var(--transition)',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--primary)'; e.currentTarget.style.color = 'white'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'var(--primary-bg)'; e.currentTarget.style.color = 'var(--primary)'; }}
+                            >
+                              <FiEye size={14} />
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Recovery Details Modal */}
+          {viewingRecovery && (
+            <RecoveryDetailsModal recovery={viewingRecovery} onClose={() => setViewingRecovery(null)} />
           )}
 
         </main>
@@ -746,6 +942,333 @@ function DetailRow({ label, value, mono, badge, small }) {
   );
 }
 
+
+function RecoveryStatCard({ label, value, icon, color }) {
+  return (
+    <div style={{
+      background: 'var(--bg-primary)',
+      border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)',
+      padding: '1rem',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.5rem',
+      boxShadow: 'var(--shadow-sm)',
+      transition: 'var(--transition)',
+    }}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{
+          width: '36px',
+          height: '36px',
+          borderRadius: 'var(--radius-md)',
+          background: `${color}15`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color,
+        }}>
+          {icon}
+        </div>
+        <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 800, color, lineHeight: 1 }}>
+          {value}
+        </div>
+      </div>
+      <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--text-secondary)' }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function RecoveryDetailsModal({ recovery, onClose }) {
+  const truncateHash = (hash) => {
+    if (!hash) return '—';
+    if (hash.length <= 24) return hash;
+    return `${hash.substring(0, 12)}...${hash.substring(hash.length - 12)}`;
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.75)',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: '1.5rem',
+        animation: 'fadeIn 0.2s ease',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-primary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-xl)',
+          width: '100%',
+          maxWidth: '720px',
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: 'var(--shadow-2xl)',
+          animation: 'scaleIn 0.2s ease',
+        }}
+      >
+        {/* Modal Header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '1.5rem',
+          borderBottom: '2px solid var(--border-color)',
+          background: 'var(--bg-secondary)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: 'var(--radius-lg)',
+              background: recovery.status === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: recovery.status === 'success' ? 'var(--success)' : 'var(--danger)',
+            }}>
+              <FiRotateCcw size={20} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                File Recovery Details
+              </h3>
+              <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', margin: 0 }}>
+                Blockchain-verified recovery operation
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '0.5rem',
+              display: 'flex',
+              transition: 'var(--transition)',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+          >
+            <FiX size={20} />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div style={{ padding: '1.5rem', overflow: 'auto', flex: 1 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+            <RecoveryDetailRow label="File Name" value={recovery.fileName || 'Unknown'} />
+            <RecoveryDetailRow label="File Key" value={recovery.fileKey || '—'} />
+            <RecoveryDetailRow label="User Email" value={recovery.userEmail || recovery.userId || '—'} />
+            <RecoveryDetailRow label="Recovery Date" value={recovery.recoveredAt || recovery.timestamp ? new Date(recovery.recoveredAt || recovery.timestamp).toLocaleString() : '—'} />
+            <RecoveryDetailRow label="Status" value={
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.375rem',
+                padding: '0.25rem 0.75rem',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 'var(--font-size-xs)',
+                fontWeight: 600,
+                background: recovery.status === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
+                color: recovery.status === 'success' ? 'var(--success)' : 'var(--danger)',
+              }}>
+                {recovery.status === 'success' ? <FiCheckCircle size={12} /> : <FiAlertTriangle size={12} />}
+                {recovery.status?.toUpperCase() || 'UNKNOWN'}
+              </span>
+            } />
+            <RecoveryDetailRow label="Blockchain Recorded" value={
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.375rem',
+                fontSize: 'var(--font-size-sm)',
+                fontWeight: 600,
+                color: recovery.blockchainRecorded ? 'var(--success)' : 'var(--text-muted)',
+              }}>
+                {recovery.blockchainRecorded ? <><FiCheckCircle size={14} /> Yes</> : '—'}
+              </span>
+            } />
+          </div>
+
+          {/* Hash Information */}
+          <div style={{ marginTop: '1.5rem' }}>
+            <p style={{
+              fontSize: 'var(--font-size-xs)',
+              fontWeight: 700,
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              marginBottom: '0.75rem',
+            }}>
+              Hash Verification
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{
+                background: 'var(--info-bg)',
+                border: '1px solid var(--info)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.875rem',
+              }}>
+                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: '0.375rem' }}>
+                  Blockchain Trusted SHA-256
+                </p>
+                <p style={{
+                  fontSize: 'var(--font-size-sm)',
+                  fontFamily: 'monospace',
+                  color: 'var(--info)',
+                  fontWeight: 600,
+                  wordBreak: 'break-all',
+                  margin: 0,
+                }} title={recovery.trustedSha256 || recovery.originalHash}>
+                  {recovery.trustedSha256 || recovery.originalHash || 'N/A'}
+                </p>
+              </div>
+              <div style={{
+                background: recovery.status === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
+                border: `1px solid ${recovery.status === 'success' ? 'var(--success)' : 'var(--danger)'}`,
+                borderRadius: 'var(--radius-md)',
+                padding: '0.875rem',
+              }}>
+                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: '0.375rem' }}>
+                  Restored SHA-256
+                </p>
+                <p style={{
+                  fontSize: 'var(--font-size-sm)',
+                  fontFamily: 'monospace',
+                  color: recovery.status === 'success' ? 'var(--success)' : 'var(--danger)',
+                  fontWeight: 600,
+                  wordBreak: 'break-all',
+                  margin: 0,
+                }} title={recovery.restoredSha256 || recovery.restoredHash}>
+                  {recovery.restoredSha256 || recovery.restoredHash || 'N/A'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Version Information */}
+          <div style={{ marginTop: '1.5rem' }}>
+            <p style={{
+              fontSize: 'var(--font-size-xs)',
+              fontWeight: 700,
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              marginBottom: '0.75rem',
+            }}>
+              Version Information
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
+              <RecoveryDetailRow label="Original S3 Version ID" value={recovery.originalVersionId || '—'} mono />
+              {recovery.blockchainTxId && (
+                <RecoveryDetailRow label="Blockchain Transaction ID" value={truncateHash(recovery.blockchainTxId)} mono />
+              )}
+            </div>
+          </div>
+
+          {/* Error Information */}
+          {recovery.error && (
+            <div style={{ marginTop: '1.5rem' }}>
+              <p style={{
+                fontSize: 'var(--font-size-xs)',
+                fontWeight: 700,
+                color: 'var(--text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                marginBottom: '0.75rem',
+              }}>
+                Error Details
+              </p>
+              <div style={{
+                background: 'var(--danger-bg)',
+                border: '1px solid var(--danger)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.875rem',
+              }}>
+                <p style={{
+                  fontSize: 'var(--font-size-sm)',
+                  color: 'var(--danger)',
+                  fontWeight: 500,
+                  margin: 0,
+                }}>
+                  {recovery.error}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          padding: '1rem 1.5rem',
+          borderTop: '2px solid var(--border-color)',
+          background: 'var(--bg-secondary)',
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '0.625rem 1.5rem',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--primary)',
+              color: 'white',
+              border: 'none',
+              fontSize: 'var(--font-size-sm)',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'var(--transition)',
+              boxShadow: 'var(--shadow-md)',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecoveryDetailRow({ label, value, mono = false }) {
+  return (
+    <div>
+      <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+        {label}
+      </p>
+      <p style={{
+        fontSize: 'var(--font-size-sm)',
+        fontWeight: 600,
+        color: 'var(--text-primary)',
+        margin: 0,
+        fontFamily: mono ? 'monospace' : 'inherit',
+        wordBreak: 'break-all',
+      }}>
+        {typeof value === 'string' ? value : value}
+      </p>
+    </div>
+  );
+}
 
 function FailureDetailsModal({ failure, onClose }) {
   const metadata = failure.metadata || {};

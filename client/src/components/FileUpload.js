@@ -5,14 +5,21 @@ import { toast } from 'react-toastify';
 import { uploadFile } from '../services/api';
 
 /**
+ * FileUpload
+ * Drag-and-drop file uploader. Calls the /api/files/upload endpoint,
+ * which stores the file in AWS S3 and logs the event to Firebase.
+ *
+ * Props:
+ *   onSuccess (fn) — called with the uploaded file metadata after success
+ *   accept    (obj) — react-dropzone accept config (default: all files)
  * FileUpload — drag-and-drop uploader.
  * Props: onSuccess(fn), accept(obj)
  * All logic identical to original — only visual styles changed.
  */
 function FileUpload({ onSuccess, accept }) {
-  const [files,     setFiles]     = useState([]);
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [progress,  setProgress]  = useState(0);
+  const [progress, setProgress] = useState(0);
 
   const onDrop = useCallback((accepted) => {
     setFiles(prev => [...prev, ...accepted]);
@@ -24,24 +31,29 @@ function FileUpload({ onSuccess, accept }) {
     multiple: true,
   });
 
-  const removeFile = (index) => setFiles(prev => prev.filter((_, i) => i !== index));
+  const removeFile = (index) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
 
   const handleUpload = async () => {
     if (files.length === 0) return;
     setUploading(true);
     setProgress(0);
+
     let successCount = 0;
     for (let i = 0; i < files.length; i++) {
       try {
         const formData = new FormData();
         formData.append('file', files[i]);
-        await uploadFile(formData);
+        const result = await uploadFile(formData);
         successCount++;
+        if (onSuccess) onSuccess(result.data);
       } catch (err) {
         toast.error(`Failed to upload ${files[i].name}: ${err.response?.data?.message || err.message}`);
       }
       setProgress(Math.round(((i + 1) / files.length) * 100));
     }
+
     if (successCount > 0) {
       toast.success(`${successCount} file(s) uploaded successfully.`);
       setFiles([]);
@@ -163,6 +175,7 @@ function FileUpload({ onSuccess, accept }) {
         </div>
       )}
 
+      {/* Confirmation icon after upload */}
       {!uploading && progress === 100 && (
         <div style={{ marginTop: '16px', textAlign: 'center', color: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '1rem', fontWeight: 600 }}>
           <FiCheckCircle size={18} /> Upload complete

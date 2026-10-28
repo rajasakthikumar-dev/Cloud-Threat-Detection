@@ -94,6 +94,7 @@ const COLLECTIONS = {
   FILE_METADATA:         'file_metadata',
   PASSWORD_RESET_TOKENS: 'password_reset_tokens',
   PASSWORD_RESET_OTPS:   'password_reset_otps',
+  FILE_RECOVERY_LOGS:    'file_recovery_logs',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -498,6 +499,209 @@ async function deleteOTPsByEmail(email) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// FILE RECOVERY LOG HELPERS
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Save a file recovery log entry.
+ * Records both successful and failed recovery attempts for audit purposes.
+ *
+ * @param {object} params
+ * @param {string} params.fileId                   — File identifier
+ * @param {string} params.fileName                 — Original file name
+ * @param {string} params.fileKey                  — S3 object key
+ * @param {string} params.userId                   — User initiating recovery
+ * @param {string} params.userEmail                — User email
+ * @param {string} params.originalS3VersionId      — Original trusted S3 version
+ * @param {string} [params.restoredS3VersionId]    — New current version after restore
+ * @param {string} params.trustedOriginalSha256    — Blockchain-verified hash
+ * @param {string} [params.restoredSha256]         — Hash of restored content
+ * @param {string} params.status                   — 'success' | 'failed'
+ * @param {boolean} params.integrityVerified       — Final verification result
+ * @param {string} [params.failureReason]          — Error message if failed
+ * @param {string} [params.blockchainTransactionId] — Fabric transaction ID
+ * @param {string} [params.ipAddress]              — User IP
+ * @param {string} [params.device]                 — Device info
+ * @param {string} [params.os]                     — OS info
+ * @param {string} [params.browser]                — Browser info
+ * @returns {Promise<string>} Document ID
+ */
+async function saveRecoveryLog({
+  fileId,
+  fileName,
+  fileKey,
+  userId,
+  userEmail,
+  originalS3VersionId,
+  restoredS3VersionId = null,
+  trustedOriginalSha256,
+  restoredSha256 = null,
+  status,
+  integrityVerified,
+  failureReason = null,
+  blockchainTransactionId = null,
+  ipAddress = '',
+  device = '',
+  os = '',
+  browser = '',
+}) {
+  try {
+    const docRef = await db.collection(COLLECTIONS.FILE_RECOVERY_LOGS).add({
+      fileId,
+      fileName,
+      fileKey,
+      userId,
+      userEmail,
+      originalS3VersionId,
+      restoredS3VersionId,
+      trustedOriginalSha256,
+      restoredSha256,
+      status,
+      integrityVerified,
+      failureReason,
+      blockchainTransactionId,
+      ipAddress,
+      device,
+      os,
+      browser,
+      startedAt:   admin.firestore.FieldValue.serverTimestamp(),
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`[Firebase] Recovery log saved: ${docRef.id} — ${status} for ${fileName}`);
+    return docRef.id;
+  } catch (err) {
+    console.error('[Firebase] saveRecoveryLog error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Get recovery logs for a specific user.
+ *
+ * @param {string} userId — User ID to filter by
+ * @param {number} limit — Maximum number of records (default 100)
+ * @returns {Promise<Array>} Array of recovery log objects
+ */
+async function getRecoveryLogsByUser(userId, limit = 100) {
+  try {
+    // NOTE: orderBy('completedAt', 'desc') removed temporarily due to missing Firestore composite index
+    // To enable sorting by date, create a composite index in Firebase Console:
+    //   Collection: file_recovery_logs
+    //   Fields: userId (Ascending), completedAt (Descending)
+    // Index creation URL is logged when the query fails
+    const snap = await db.collection(COLLECTIONS.FILE_RECOVERY_LOGS)
+      .where('userId', '==', userId)
+      .limit(limit)
+      .get();
+
+    // Get all fileKeys from recovery logs to check if files still exist
+    const fileKeys = [...new Set(snap.docs.map(doc => doc.data().fileKey).filter(Boolean))];
+    
+    // Query file_metadata to find which files still exist
+    const existingFileKeys = new Set();
+    if (fileKeys.length > 0) {
+      // Firestore 'in' queries are limited to 10 items, so batch them
+      for (let i = 0; i < fileKeys.length; i += 10) {
+        const batch = fileKeys.slice(i, i + 10);
+        const fileSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+          .where('key', 'in', batch)
+          .select('key') // Only fetch the key field for efficiency
+          .get();
+        fileSnap.docs.forEach(doc => existingFileKeys.add(doc.data().key));
+      }
+    }
+
+    // Sort in-memory by completedAt (most recent first) and filter out deleted records
+    const docs = snap.docs
+      .map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          startedAt: data.startedAt?.toDate()?.toISOString() || null,
+          completedAt: data.completedAt?.toDate()?.toISOString() || null,
+          _sortKey: data.completedAt?.toMillis?.() || data.startedAt?.toMillis?.() || 0,
+        };
+      })
+      // SYNCHRONIZATION: Filter out records marked as deleted OR whose files no longer exist
+      .filter(doc => {
+        // If explicitly marked deleted, exclude it
+        if (doc.deleted) return false;
+        
+        // If the associated file no longer exists, exclude it (handles legacy records)
+        if (doc.fileKey && !existingFileKeys.has(doc.fileKey)) return false;
+        
+        return true;
+      });
+
+    // Sort by timestamp (descending - newest first)
+    docs.sort((a, b) => b._sortKey - a._sortKey);
+
+    // Remove sort key before returning
+    return docs.map(({ _sortKey, ...doc }) => doc);
+  } catch (err) {
+    console.error('[Firebase] getRecoveryLogsByUser error:', err.message);
+    if (err.message.includes('index')) {
+      console.error('[Firebase] Firestore composite index required.');
+      console.error('[Firebase] Create index at:', err.message.match(/https:\/\/[^\s]+/)?.[0] || 'See Firebase Console');
+    }
+    return [];
+  }
+}
+
+/**
+ * Get all recovery logs (admin only).
+ *
+ * @param {number} limit — Maximum number of records (default 100)
+ * @returns {Promise<Array>} Array of recovery log objects
+ */
+async function getAllRecoveryLogs(limit = 100) {
+  try {
+    const snap = await db.collection(COLLECTIONS.FILE_RECOVERY_LOGS)
+      .orderBy('completedAt', 'desc')
+      .limit(limit)
+      .get();
+
+    // Get all fileKeys to check which files still exist
+    const fileKeys = [...new Set(snap.docs.map(doc => doc.data().fileKey).filter(Boolean))];
+    
+    // Query file_metadata to find which files still exist
+    const existingFileKeys = new Set();
+    if (fileKeys.length > 0) {
+      // Firestore 'in' queries are limited to 10 items, so batch them
+      for (let i = 0; i < fileKeys.length; i += 10) {
+        const batch = fileKeys.slice(i, i + 10);
+        const fileSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+          .where('key', 'in', batch)
+          .select('key')
+          .get();
+        fileSnap.docs.forEach(doc => existingFileKeys.add(doc.data().key));
+      }
+    }
+
+    return snap.docs
+      .map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          startedAt: data.startedAt?.toDate()?.toISOString() || null,
+          completedAt: data.completedAt?.toDate()?.toISOString() || null,
+        };
+      })
+      // Filter out deleted records or records for non-existent files
+      .filter(doc => {
+        if (doc.deleted) return false;
+        if (doc.fileKey && !existingFileKeys.has(doc.fileKey)) return false;
+        return true;
+      });
+  } catch (err) {
+    console.error('[Firebase] getAllRecoveryLogs error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   admin,
   db,
@@ -522,4 +726,8 @@ module.exports = {
   validateOTP,
   incrementOTPAttempts,
   deleteOTPsByEmail,
+  // File recovery logs
+  saveRecoveryLog,
+  getRecoveryLogsByUser,
+  getAllRecoveryLogs,
 };

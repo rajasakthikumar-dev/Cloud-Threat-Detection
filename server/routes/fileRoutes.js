@@ -1,12 +1,19 @@
 /**
  * routes/fileRoutes.js
  * ----------------------
- * POST   /api/files/upload        — upload file to S3
- * GET    /api/files               — list authenticated user's files
- * GET    /api/files/preview/:key  — get inline preview pre-signed URL
- * GET    /api/files/content/:key  — stream file content directly
- * GET    /api/files/download/:key — get pre-signed download URL
- * DELETE /api/files/:key          — delete file from S3
+ * POST   /api/files/upload                    — upload file to S3
+ * GET    /api/files                           — list authenticated user's files
+ * GET    /api/files/preview/:key              — get inline preview pre-signed URL
+ * GET    /api/files/content/:key              — stream file content directly
+ * GET    /api/files/download/:key             — get pre-signed download URL
+ * DELETE /api/files/:key                      — delete file from S3
+ * POST   /api/files/verify/:key               — verify file integrity against blockchain
+ * GET    /api/files/history/:key              — get blockchain version history
+ * POST   /api/files/:key/recover              — recover original blockchain-verified file
+ * GET    /api/files/recovery-history          — get user's recovery history
+ * GET    /api/files/admin/blockchain          — get all blockchain-protected files (admin)
+ * GET    /api/files/admin/integrity-failures  — get all integrity failures (admin)
+ * GET    /api/files/admin/recovery-history    — get all recovery logs (admin)
  */
 
 const router = require('express').Router();
@@ -23,6 +30,10 @@ const {
   getFileHistoryEndpoint,
   getAdminBlockchainFiles,
   getIntegrityFailures,
+  recoverFile,
+  getRecoveryHistory,
+  deleteRecoveryRecord,
+  getAdminRecoveryHistory,
 } = require('../controllers/fileController');
 
 // Store files in memory so we can pass the buffer directly to the S3 SDK
@@ -49,6 +60,7 @@ router.use(protect);
 // Admin-only routes
 router.get('/admin/blockchain', requireAdmin, getAdminBlockchainFiles);
 router.get('/admin/integrity-failures', requireAdmin, getIntegrityFailures);
+router.get('/admin/recovery-history', requireAdmin, getAdminRecoveryHistory);
 
 router.post('/upload',          upload.single('file'), uploadFile);
 router.get('/',                 getFiles);
@@ -60,6 +72,11 @@ router.delete('/:key',          deleteFile);
 // Integrity verification endpoints
 router.post('/verify/:key',     verifyFileIntegrityEndpoint);
 router.get('/history/:key',     getFileHistoryEndpoint);
+
+// File recovery endpoints
+router.post('/:key/recover',       recoverFile);
+router.get('/recovery-history',    getRecoveryHistory);
+router.delete('/recovery/:recordId', deleteRecoveryRecord);
 
 module.exports = router;
 

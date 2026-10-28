@@ -19,6 +19,8 @@ const {
   getObjectStream,
   deleteFromS3,
   listUserFiles,
+  getObjectVersion,
+  restoreObjectVersion,
 } = require('../config/aws');
 
 const {
@@ -27,11 +29,14 @@ const {
   logActivity,
   db,
   COLLECTIONS,
+  saveRecoveryLog,
+  getRecoveryLogsByUser,
+  getAllRecoveryLogs,
 } = require('../config/firebase');
 
 const { getClientInfo, formatClientInfo } = require('../utils/deviceParser');
 
-const { submitFileIntegrityRecord, verifyFileIntegrity, getFileHistory } = require('../config/fabricGateway');
+const { submitFileIntegrityRecord, verifyFileIntegrity, getFileHistory, recordFileRecovery } = require('../config/fabricGateway');
 
 // Node built-in — no package install needed.
 // Already used by authController for password-reset token hashing.
@@ -336,6 +341,7 @@ async function deleteFile(req, res) {
     }
 
     const fileDoc = snap.docs[0].data();
+    const fileDocId = snap.docs[0].id;
 
     // Verify authenticated user is the owner
     if (fileDoc.userId !== req.user.id) {
@@ -345,6 +351,31 @@ async function deleteFile(req, res) {
     // Remove from S3 and Firestore
     await deleteFromS3(key);
     await deleteFileMetadata(key);
+
+    // SYNCHRONIZATION: Mark related recovery logs as deleted
+    // Find all recovery logs for this file (by fileKey or fileId)
+    try {
+      const recoverySnap = await db.collection(COLLECTIONS.FILE_RECOVERY_LOGS)
+        .where('fileKey', '==', key)
+        .get();
+      
+      if (!recoverySnap.empty) {
+        const batch = db.batch();
+        recoverySnap.docs.forEach(doc => {
+          // Soft delete: mark as deleted rather than removing the audit record
+          batch.update(doc.ref, {
+            deleted: true,
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deletedBy: req.user.id
+          });
+        });
+        await batch.commit();
+        console.log(`[fileController.deleteFile] Marked ${recoverySnap.size} recovery log(s) as deleted for file: ${key}`);
+      }
+    } catch (recoveryErr) {
+      // Log error but don't fail the delete operation
+      console.error('[fileController.deleteFile] Failed to update recovery logs:', recoveryErr.message);
+    }
 
     const clientInfo = getClientInfo(req);
     await logActivity({
@@ -530,6 +561,13 @@ async function verifyFileIntegrityEndpoint(req, res) {
       }
     }
 
+    // ── 8. Determine recovery eligibility ───────────────────
+    // Recovery is available only when:
+    // 1. Integrity mismatch detected (!v.match)
+    // 2. Original S3 version metadata exists
+    // 3. User is the file owner (already validated above)
+    const recoveryEligible = !v.match && !!fileDoc.s3VersionId && !!fileDoc.sha256;
+
     return res.json({
       message: 'File integrity verification completed.',
       verification: {
@@ -541,6 +579,7 @@ async function verifyFileIntegrityEndpoint(req, res) {
         currentSha256,                    // hash re-computed from live S3 bytes
         storedSha256:  v.storedSha256,    // hash recorded on blockchain at upload time
         timestamp:     v.timestamp,       // blockchain record timestamp
+        recoveryEligible,                 // true if file can be recovered
       },
     });
 
@@ -761,6 +800,529 @@ async function getFileHistoryEndpoint(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// RECOVER ORIGINAL FILE
+// POST /api/files/:key/recover
+// Blockchain-verified file recovery: restore original uploaded version
+// ─────────────────────────────────────────────────────────────
+async function recoverFile(req, res) {
+  const key = decodeURIComponent(req.params.key);
+  const clientInfo = getClientInfo(req);
+  
+  console.log('══════════════════════════════════════════════════════════════');
+  console.log('[FILE RECOVERY] Starting recovery process for:', key);
+  console.log('[FILE RECOVERY] User:', req.user.email, 'ID:', req.user.id);
+  console.log('══════════════════════════════════════════════════════════════');
+  
+  try {
+    // ── STEP 1: Verify ownership and get file metadata ──────
+    const snap = await db.collection(COLLECTIONS.FILE_METADATA)
+      .where('key', '==', key).limit(1).get();
+
+    if (snap.empty) {
+      console.log('[FILE RECOVERY] FAILED: File not found in Firestore');
+      return res.status(404).json({ message: 'File not found.' });
+    }
+
+    const fileDoc = snap.docs[0].data();
+    
+    // Authorization: Only file owner can recover
+    if (fileDoc.userId !== req.user.id) {
+      console.log('[FILE RECOVERY] FAILED: User not authorized');
+      return res.status(403).json({ message: 'You can only recover your own files.' });
+    }
+
+    console.log('[FILE RECOVERY] File metadata retrieved:', fileDoc.name);
+    console.log('[FILE RECOVERY] Original S3 VersionId:', fileDoc.s3VersionId);
+    console.log('[FILE RECOVERY] Trusted SHA-256:', fileDoc.sha256);
+
+    // ── STEP 2: Validate blockchain record exists ────────────
+    if (fileDoc.blockchainStatus !== 'recorded') {
+      console.log('[FILE RECOVERY] FAILED: No blockchain record');
+      return res.status(400).json({
+        message: 'Cannot recover file: no blockchain integrity record found.',
+        blockchainStatus: fileDoc.blockchainStatus || 'unknown',
+      });
+    }
+
+    if (!fileDoc.s3VersionId || !fileDoc.sha256) {
+      console.log('[FILE RECOVERY] FAILED: Missing version or hash metadata');
+      return res.status(400).json({
+        message: 'Cannot recover file: missing original version information.',
+      });
+    }
+
+    // ── STEP 3: Verify current file has integrity mismatch ───
+    console.log('[FILE RECOVERY] Step 3: Verifying current file integrity...');
+    const { stream: currentStream } = await getObjectStream(key);
+    const currentBuffer = await streamToBuffer(currentStream);
+    const currentSha256 = crypto.createHash('sha256').update(currentBuffer).digest('hex');
+    
+    console.log('[FILE RECOVERY] Current file SHA-256:', currentSha256);
+    console.log('[FILE RECOVERY] Trusted blockchain SHA-256:', fileDoc.sha256);
+
+    // If current file matches trusted hash, no recovery needed
+    if (currentSha256 === fileDoc.sha256) {
+      console.log('[FILE RECOVERY] ABORTED: File already matches blockchain hash');
+      return res.status(400).json({
+        message: 'File recovery not needed: current file matches blockchain hash.',
+        status: 'already_verified',
+      });
+    }
+
+    console.log('[FILE RECOVERY] Integrity mismatch confirmed — recovery authorized');
+
+    // ── STEP 4: Retrieve original S3 version ─────────────────
+    console.log('[FILE RECOVERY] Step 4: Retrieving original S3 version...');
+    let originalStream, originalContentType;
+    
+    try {
+      const originalVersion = await getObjectVersion(key, fileDoc.s3VersionId);
+      originalStream = originalVersion.stream;
+      originalContentType = originalVersion.contentType;
+      console.log('[FILE RECOVERY] Original version retrieved successfully');
+    } catch (s3Error) {
+      console.error('[FILE RECOVERY] FAILED: Cannot retrieve original S3 version:', s3Error.message);
+      
+      // Log failed recovery attempt
+      await saveRecoveryLog({
+        fileId: key.replace(/[^a-zA-Z0-9\-_.]/g, '_'),
+        fileName: fileDoc.name,
+        fileKey: key,
+        userId: req.user.id,
+        userEmail: req.user.email,
+        originalS3VersionId: fileDoc.s3VersionId,
+        trustedOriginalSha256: fileDoc.sha256,
+        status: 'failed',
+        integrityVerified: false,
+        failureReason: `S3 version retrieval failed: ${s3Error.message}`,
+        ipAddress: clientInfo.ip,
+        device: clientInfo.device,
+        os: clientInfo.os,
+        browser: clientInfo.browser,
+      });
+
+      return res.status(500).json({
+        message: 'Recovery failed: original version not accessible in S3.',
+        error: s3Error.message,
+      });
+    }
+
+    // ── STEP 5: Verify original version matches blockchain hash ─
+    console.log('[FILE RECOVERY] Step 5: Verifying original version integrity...');
+    const originalBuffer = await streamToBuffer(originalStream);
+    const originalSha256 = crypto.createHash('sha256').update(originalBuffer).digest('hex');
+    
+    console.log('[FILE RECOVERY] Original version SHA-256:', originalSha256);
+
+    if (originalSha256 !== fileDoc.sha256) {
+      console.error('[FILE RECOVERY] FAILED: Original version hash mismatch!');
+      console.error('[FILE RECOVERY] Expected:', fileDoc.sha256);
+      console.error('[FILE RECOVERY] Got:', originalSha256);
+      
+      // Log failed recovery attempt
+      await saveRecoveryLog({
+        fileId: key.replace(/[^a-zA-Z0-9\-_.]/g, '_'),
+        fileName: fileDoc.name,
+        fileKey: key,
+        userId: req.user.id,
+        userEmail: req.user.email,
+        originalS3VersionId: fileDoc.s3VersionId,
+        trustedOriginalSha256: fileDoc.sha256,
+        restoredSha256: originalSha256,
+        status: 'failed',
+        integrityVerified: false,
+        failureReason: 'Original S3 version hash does not match blockchain record',
+        ipAddress: clientInfo.ip,
+        device: clientInfo.device,
+        os: clientInfo.os,
+        browser: clientInfo.browser,
+      });
+
+      return res.status(500).json({
+        message: 'Recovery failed: original version does not match blockchain record.',
+        error: 'Hash verification failed',
+      });
+    }
+
+    console.log('[FILE RECOVERY] ✓ Original version verified against blockchain');
+
+    // ── STEP 6: Restore original content as new current version ─
+    console.log('[FILE RECOVERY] Step 6: Restoring verified content to S3...');
+    let restoredVersionId;
+    
+    try {
+      const restoreResult = await restoreObjectVersion(key, originalBuffer, originalContentType);
+      restoredVersionId = restoreResult.versionId;
+      console.log('[FILE RECOVERY] Content restored — new VersionId:', restoredVersionId);
+    } catch (restoreError) {
+      console.error('[FILE RECOVERY] FAILED: S3 restore operation failed:', restoreError.message);
+      
+      // Log failed recovery attempt
+      await saveRecoveryLog({
+        fileId: key.replace(/[^a-zA-Z0-9\-_.]/g, '_'),
+        fileName: fileDoc.name,
+        fileKey: key,
+        userId: req.user.id,
+        userEmail: req.user.email,
+        originalS3VersionId: fileDoc.s3VersionId,
+        trustedOriginalSha256: fileDoc.sha256,
+        restoredSha256: originalSha256,
+        status: 'failed',
+        integrityVerified: true,
+        failureReason: `S3 restore operation failed: ${restoreError.message}`,
+        ipAddress: clientInfo.ip,
+        device: clientInfo.device,
+        os: clientInfo.os,
+        browser: clientInfo.browser,
+      });
+
+      return res.status(500).json({
+        message: 'Recovery failed: could not restore content to S3.',
+        error: restoreError.message,
+      });
+    }
+
+    // ── STEP 7: Verify restored content ──────────────────────
+    console.log('[FILE RECOVERY] Step 7: Verifying restored content...');
+    const { stream: restoredStream } = await getObjectStream(key);
+    const restoredBuffer = await streamToBuffer(restoredStream);
+    const restoredSha256 = crypto.createHash('sha256').update(restoredBuffer).digest('hex');
+    
+    console.log('[FILE RECOVERY] Restored file SHA-256:', restoredSha256);
+
+    if (restoredSha256 !== fileDoc.sha256) {
+      console.error('[FILE RECOVERY] FAILED: Post-restore verification failed!');
+      console.error('[FILE RECOVERY] Expected:', fileDoc.sha256);
+      console.error('[FILE RECOVERY] Got:', restoredSha256);
+      
+      // Log failed recovery attempt
+      await saveRecoveryLog({
+        fileId: key.replace(/[^a-zA-Z0-9\-_.]/g, '_'),
+        fileName: fileDoc.name,
+        fileKey: key,
+        userId: req.user.id,
+        userEmail: req.user.email,
+        originalS3VersionId: fileDoc.s3VersionId,
+        restoredS3VersionId: restoredVersionId,
+        trustedOriginalSha256: fileDoc.sha256,
+        restoredSha256: restoredSha256,
+        status: 'failed',
+        integrityVerified: false,
+        failureReason: 'Post-restoration verification failed',
+        ipAddress: clientInfo.ip,
+        device: clientInfo.device,
+        os: clientInfo.os,
+        browser: clientInfo.browser,
+      });
+
+      return res.status(500).json({
+        message: 'Recovery failed: restored content verification failed.',
+        error: 'Post-restore hash mismatch',
+      });
+    }
+
+    console.log('[FILE RECOVERY] ✓ Restored content verified');
+
+    // ── STEP 8: Record recovery on blockchain ────────────────
+    console.log('[FILE RECOVERY] Step 8: Recording recovery audit on blockchain...');
+    const fileId = key.replace(/[^a-zA-Z0-9\-_.]/g, '_');
+    let blockchainTxId = null;
+    
+    try {
+      const recoveryAudit = await recordFileRecovery({
+        fileId,
+        fileName: fileDoc.name,
+        userId: req.user.id,
+        originalS3VersionId: fileDoc.s3VersionId,
+        restoredS3VersionId: restoredVersionId || 'unknown',
+        trustedSha256: fileDoc.sha256,
+        restoredSha256: restoredSha256,
+        recoveryReason: 'integrity_mismatch',
+      });
+      
+      if (recoveryAudit.success) {
+        blockchainTxId = recoveryAudit.transactionId;
+        console.log('[FILE RECOVERY] ✓ Recovery recorded on blockchain:', blockchainTxId);
+      } else {
+        console.warn('[FILE RECOVERY] WARNING: Blockchain recording failed:', recoveryAudit.error);
+        // Continue anyway — Firestore log is still created
+      }
+    } catch (blockchainError) {
+      console.warn('[FILE RECOVERY] WARNING: Blockchain recording error:', blockchainError.message);
+      // Continue anyway — Firestore log is still created
+    }
+
+    // ── STEP 9: Save recovery log to Firestore ───────────────
+    console.log('[FILE RECOVERY] Step 9: Saving recovery log to Firestore...');
+    await saveRecoveryLog({
+      fileId,
+      fileName: fileDoc.name,
+      fileKey: key,
+      userId: req.user.id,
+      userEmail: req.user.email,
+      originalS3VersionId: fileDoc.s3VersionId,
+      restoredS3VersionId: restoredVersionId,
+      trustedOriginalSha256: fileDoc.sha256,
+      restoredSha256: restoredSha256,
+      status: 'success',
+      integrityVerified: true,
+      blockchainTransactionId: blockchainTxId,
+      ipAddress: clientInfo.ip,
+      device: clientInfo.device,
+      os: clientInfo.os,
+      browser: clientInfo.browser,
+    });
+
+    // ── STEP 10: Log activity ─────────────────────────────────
+    await logActivity({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      event_type: 'file_recovery_success',
+      details: `Successfully recovered "${fileDoc.name}" to blockchain-verified original from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device: clientInfo.device,
+      os: clientInfo.os,
+      browser: clientInfo.browser,
+      user_agent: clientInfo.userAgent,
+      metadata: {
+        key,
+        fileId,
+        originalS3VersionId: fileDoc.s3VersionId,
+        restoredS3VersionId: restoredVersionId,
+        trustedSha256: fileDoc.sha256,
+        blockchainTransactionId: blockchainTxId,
+      },
+    });
+
+    console.log('══════════════════════════════════════════════════════════════');
+    console.log('[FILE RECOVERY] SUCCESS: Recovery completed');
+    console.log('[FILE RECOVERY] File:', fileDoc.name);
+    console.log('[FILE RECOVERY] Original VersionId:', fileDoc.s3VersionId);
+    console.log('[FILE RECOVERY] Restored VersionId:', restoredVersionId);
+    console.log('[FILE RECOVERY] Blockchain TxId:', blockchainTxId || 'not recorded');
+    console.log('══════════════════════════════════════════════════════════════');
+
+    return res.json({
+      message: 'File recovered successfully. Integrity verification passed.',
+      recovery: {
+        fileName: fileDoc.name,
+        originalS3VersionId: fileDoc.s3VersionId,
+        restoredS3VersionId: restoredVersionId,
+        trustedSha256: fileDoc.sha256,
+        restoredSha256: restoredSha256,
+        integrityVerified: true,
+        blockchainRecorded: !!blockchainTxId,
+        blockchainTransactionId: blockchainTxId,
+      },
+    });
+
+  } catch (err) {
+    console.error('══════════════════════════════════════════════════════════════');
+    console.error('[FILE RECOVERY] UNEXPECTED ERROR:', err);
+    console.error('[FILE RECOVERY] Stack:', err.stack);
+    console.error('══════════════════════════════════════════════════════════════');
+    
+    // Log unexpected failure
+    try {
+      await logActivity({
+        userId: req.user.id,
+        userEmail: req.user.email,
+        event_type: 'file_recovery_error',
+        details: `File recovery error: ${err.message}`,
+        ip_address: clientInfo.ip,
+        metadata: { key, error: err.message },
+      });
+    } catch (logError) {
+      console.error('[FILE RECOVERY] Failed to log error:', logError);
+    }
+
+    return res.status(500).json({ 
+      message: 'File recovery failed due to unexpected error.',
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal error',
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET RECOVERY HISTORY (USER)
+// GET /api/files/recovery-history
+// Returns recovery logs for the authenticated user
+// ─────────────────────────────────────────────────────────────
+async function getRecoveryHistory(req, res) {
+  try {
+    const logs = await getRecoveryLogsByUser(req.user.id, 50); // Limit to 50 most recent
+    
+    console.log(`[getRecoveryHistory] Retrieved ${logs.length} recovery logs for user ${req.user.email}`);
+
+    return res.json({
+      message: 'Recovery history retrieved successfully.',
+      recoveries: logs,
+    });
+  } catch (err) {
+    console.error('[fileController.getRecoveryHistory]', err.message);
+    return res.status(500).json({
+      message: 'Failed to retrieve recovery history.',
+      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DELETE RECOVERY RECORD
+// DELETE /api/files/recovery/:recordId
+// Deletes a specific recovery record by its ID
+// Also marks it as deleted and optionally deletes the associated file
+// ─────────────────────────────────────────────────────────────
+async function deleteRecoveryRecord(req, res) {
+  try {
+    const recordId = req.params.recordId;
+    
+    // Get the recovery record first to verify ownership and get fileKey
+    const recordRef = db.collection(COLLECTIONS.FILE_RECOVERY_LOGS).doc(recordId);
+    const recordDoc = await recordRef.get();
+    
+    if (!recordDoc.exists) {
+      return res.status(404).json({ message: 'Recovery record not found.' });
+    }
+    
+    const recordData = recordDoc.data();
+    
+    // Verify ownership
+    if (recordData.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'You can only delete your own recovery records.' });
+    }
+    
+    // Mark the recovery record as deleted (soft delete for audit trail)
+    await recordRef.update({
+      deleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: req.user.id
+    });
+    
+    console.log(`[fileController.deleteRecoveryRecord] Marked recovery record ${recordId} as deleted`);
+    
+    // Optionally delete the associated file if it still exists
+    // This handles the case where the file exists but the user deletes from Recovered Files
+    const fileKey = recordData.fileKey;
+    if (fileKey) {
+      try {
+        const fileSnap = await db.collection(COLLECTIONS.FILE_METADATA)
+          .where('key', '==', fileKey)
+          .limit(1)
+          .get();
+        
+        if (!fileSnap.empty) {
+          const fileDoc = fileSnap.docs[0].data();
+          
+          // Only delete if user owns it
+          if (fileDoc.userId === req.user.id) {
+            await deleteFromS3(fileKey);
+            await deleteFileMetadata(fileKey);
+            
+            // Mark ALL other recovery logs for this file as deleted too
+            const otherRecoverySnap = await db.collection(COLLECTIONS.FILE_RECOVERY_LOGS)
+              .where('fileKey', '==', fileKey)
+              .get();
+            
+            if (!otherRecoverySnap.empty) {
+              const batch = db.batch();
+              otherRecoverySnap.docs.forEach(doc => {
+                if (doc.id !== recordId) { // Don't update the one we already updated
+                  batch.update(doc.ref, {
+                    deleted: true,
+                    deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    deletedBy: req.user.id
+                  });
+                }
+              });
+              await batch.commit();
+              console.log(`[fileController.deleteRecoveryRecord] Marked ${otherRecoverySnap.size - 1} related recovery logs as deleted`);
+            }
+            
+            console.log(`[fileController.deleteRecoveryRecord] Also deleted associated file: ${fileKey}`);
+          }
+        }
+      } catch (fileErr) {
+        // File might already be deleted, that's okay
+        console.log(`[fileController.deleteRecoveryRecord] File already deleted or inaccessible: ${fileErr.message}`);
+      }
+    }
+    
+    const clientInfo = getClientInfo(req);
+    await logActivity({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      event_type: 'recovery_record_delete',
+      details: `Deleted recovery record for ${recordData.fileName} from ${formatClientInfo(clientInfo)}`,
+      ip_address: clientInfo.ip,
+      device: clientInfo.device,
+      os: clientInfo.os,
+      browser: clientInfo.browser,
+      user_agent: clientInfo.userAgent,
+      metadata: { recordId, fileName: recordData.fileName, fileKey: recordData.fileKey },
+    });
+    
+    return res.json({ 
+      message: 'Recovery record deleted successfully.',
+      fileAlsoDeleted: fileKey ? true : false
+    });
+  } catch (err) {
+    console.error('[fileController.deleteRecoveryRecord]', err);
+    return res.status(500).json({ message: 'Failed to delete recovery record.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET ALL RECOVERY HISTORY (ADMIN ONLY)
+// GET /api/files/admin/recovery-history
+// Returns all recovery logs across all users for admin monitoring
+// ─────────────────────────────────────────────────────────────
+async function getAdminRecoveryHistory(req, res) {
+  try {
+    // Verify admin role
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required.' });
+    }
+
+    console.log('[getAdminRecoveryHistory] Called by admin:', req.user.email);
+
+    const logs = await getAllRecoveryLogs(100); // Limit to 100 most recent
+    
+    console.log(`[getAdminRecoveryHistory] Retrieved ${logs.length} total recovery logs`);
+
+    // Calculate statistics
+    const successfulRecoveries = logs.filter(log => log.status === 'success').length;
+    const failedRecoveries = logs.filter(log => log.status === 'failed').length;
+    const blockchainRecorded = logs.filter(log => log.blockchainTransactionId).length;
+    const uniqueUsers = new Set(logs.map(log => log.userId)).size;
+    const uniqueFiles = new Set(logs.map(log => log.fileKey)).size;
+
+    const stats = {
+      totalRecoveries: logs.length,
+      successfulRecoveries,
+      failedRecoveries,
+      blockchainRecorded,
+      uniqueUsers,
+      uniqueFiles,
+    };
+
+    console.log('[getAdminRecoveryHistory] Stats:', stats);
+
+    return res.json({
+      message: 'Admin recovery history retrieved successfully.',
+      recoveries: logs,
+      stats,
+    });
+  } catch (err) {
+    console.error('[fileController.getAdminRecoveryHistory]', err.message);
+    return res.status(500).json({
+      message: 'Failed to retrieve admin recovery history.',
+      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
+  }
+}
+
 module.exports = {
   uploadFile,
   getFiles,
@@ -772,4 +1334,8 @@ module.exports = {
   getFileHistoryEndpoint,
   getAdminBlockchainFiles,
   getIntegrityFailures,
+  recoverFile,
+  getRecoveryHistory,
+  deleteRecoveryRecord,
+  getAdminRecoveryHistory,
 };

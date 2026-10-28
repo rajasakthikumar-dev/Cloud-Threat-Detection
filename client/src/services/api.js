@@ -174,6 +174,10 @@ export const getFileContent = (key) =>
 export const deleteFile = (key) =>
   api.delete(`/files/${encodeURIComponent(key)}`);
 
+/** DELETE /files/recovery/:recordId — delete a recovery record */
+export const deleteRecoveryRecord = (recordId) =>
+  api.delete(`/files/recovery/${recordId}`);
+
 // ════════════════════════════════════════════════════════════
 // BLOCKCHAIN INTEGRITY
 // ════════════════════════════════════════════════════════════
@@ -193,6 +197,18 @@ export const verifyFileIntegrity = (key) =>
 /** GET /files/history/:key — get blockchain version history for a file */
 export const getFileHistory = (key) =>
   api.get(`/files/history/${encodeURIComponent(key)}`);
+
+/** POST /files/:key/recover — recover original file from verified S3 version */
+export const recoverFile = (key) =>
+  api.post(`/files/${encodeURIComponent(key)}/recover`);
+
+/** GET /files/recovery-history — get current user's file recovery history */
+export const getRecoveryHistory = () =>
+  api.get('/files/recovery-history');
+
+/** GET /files/admin/recovery-history — get all file recovery records with statistics (admin only) */
+export const getAdminRecoveryHistory = () =>
+  api.get('/files/admin/recovery-history');
 
 // ════════════════════════════════════════════════════════════
 // USERS  (Admin only)

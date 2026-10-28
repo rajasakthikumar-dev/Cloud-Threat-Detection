@@ -317,6 +317,119 @@ async function getFileHistory(fileId) {
     };
   }
 }
+
+/**
+ * Record file recovery audit on blockchain
+ * 
+ * Creates an immutable record documenting a successful file recovery operation.
+ * This transaction validates that the restored content matches the trusted hash.
+ * 
+ * @param {Object} recoveryData - Recovery audit data
+ * @param {string} recoveryData.fileId - File identifier
+ * @param {string} recoveryData.fileName - Original filename
+ * @param {string} recoveryData.userId - User who performed recovery
+ * @param {string} recoveryData.originalS3VersionId - Original trusted S3 version
+ * @param {string} recoveryData.restoredS3VersionId - New current S3 version
+ * @param {string} recoveryData.trustedSha256 - Blockchain-verified hash
+ * @param {string} recoveryData.restoredSha256 - Hash of restored content
+ * @param {string} recoveryData.recoveryReason - Reason for recovery (e.g., "integrity_mismatch")
+ * @returns {Promise<Object>} Transaction result
+ */
+async function recordFileRecovery(recoveryData) {
+  try {
+    const {
+      fileId,
+      fileName,
+      userId,
+      originalS3VersionId,
+      restoredS3VersionId,
+      trustedSha256,
+      restoredSha256,
+      recoveryReason,
+    } = recoveryData;
+    
+    // Validate required fields
+    if (!fileId || !fileName || !userId || !originalS3VersionId || 
+        !restoredS3VersionId || !trustedSha256 || !restoredSha256 || !recoveryReason) {
+      throw new Error('Missing required fields for recovery audit record');
+    }
+    
+    const contract = await getContract();
+    
+    // Submit recovery audit transaction
+    const result = await contract.submitTransaction(
+      'RecordFileRecovery',
+      fileId,
+      fileName,
+      userId,
+      originalS3VersionId,
+      restoredS3VersionId,
+      trustedSha256,
+      restoredSha256,
+      recoveryReason
+    );
+    
+    const resultString = Buffer.from(result).toString('utf8');
+    console.log('[fabricGateway] File recovery recorded on blockchain:', {
+      fileId,
+      userId,
+      transactionResult: resultString.length > 100 ? resultString.substring(0, 100) + '...' : resultString
+    });
+    
+    let transactionId = null;
+    try {
+      const resultObj = JSON.parse(resultString);
+      transactionId = resultObj.txId || null;
+    } catch (parseError) {
+      console.log('[fabricGateway] Could not parse recovery transaction result as JSON:', parseError.message);
+    }
+    
+    return {
+      success: true,
+      transactionId,
+      result: resultString,
+    };
+    
+  } catch (error) {
+    console.error('[fabricGateway] Failed to record file recovery:', error.message);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Get file recovery history from blockchain
+ * 
+ * @param {string} fileId - File identifier
+ * @returns {Promise<Object>} Recovery history result
+ */
+async function getFileRecoveryHistory(fileId) {
+  try {
+    const contract = await getContract();
+    
+    const result = await contract.evaluateTransaction(
+      'GetFileRecoveryHistory',
+      fileId
+    );
+    
+    const resultString = Buffer.from(result).toString('utf8');
+    
+    return {
+      success: true,
+      history: JSON.parse(resultString),
+    };
+    
+  } catch (error) {
+    console.error('[fabricGateway] Failed to get file recovery history:', error.message);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
 function closeGateway() {
   if (gatewayInstance) {
     gatewayInstance.close();
@@ -337,6 +450,8 @@ module.exports = {
   queryFileIntegrityRecord,
   verifyFileIntegrity,
   getFileHistory,
+  recordFileRecovery,
+  getFileRecoveryHistory,
   closeGateway,
   FABRIC_CONFIG,
 };

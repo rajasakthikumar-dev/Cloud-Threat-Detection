@@ -253,6 +253,143 @@ class FileIntegrityContract extends Contract {
 
         return JSON.stringify(result);
     }
+
+    // ──────────────────────────────────────────────────────────
+    // RecordFileRecovery
+    // ──────────────────────────────────────────────────────────
+    /**
+     * Create an immutable audit record of a successful file recovery operation.
+     * 
+     * This transaction documents when a file was restored to its original
+     * blockchain-verified state after detecting an integrity mismatch.
+     * 
+     * SECURITY: Only records successful recoveries where the restored content
+     * hash matches the trusted original hash from the blockchain.
+     *
+     * @param {Context} ctx
+     * @param {string}  fileId                   — File identifier
+     * @param {string}  fileName                 — Original file name
+     * @param {string}  userId                   — User who performed recovery
+     * @param {string}  originalS3VersionId      — Original trusted S3 version
+     * @param {string}  restoredS3VersionId      — New current S3 version after restore
+     * @param {string}  trustedSha256            — Blockchain-verified original hash
+     * @param {string}  restoredSha256           — Hash of restored content (must match trusted)
+     * @param {string}  recoveryReason           — Why recovery was needed (e.g., "integrity_mismatch")
+     * @returns {string} JSON recovery audit record
+     */
+    async RecordFileRecovery(ctx, fileId, fileName, userId, originalS3VersionId, restoredS3VersionId, trustedSha256, restoredSha256, recoveryReason) {
+        
+        // ── Input validation ────────────────────────────────
+        if (!fileId               || fileId.trim()               === '') throw new Error('fileId is required');
+        if (!fileName             || fileName.trim()             === '') throw new Error('fileName is required');
+        if (!userId               || userId.trim()               === '') throw new Error('userId is required');
+        if (!originalS3VersionId  || originalS3VersionId.trim()  === '') throw new Error('originalS3VersionId is required');
+        if (!restoredS3VersionId  || restoredS3VersionId.trim()  === '') throw new Error('restoredS3VersionId is required');
+        if (!trustedSha256        || trustedSha256.trim()        === '') throw new Error('trustedSha256 is required');
+        if (!restoredSha256       || restoredSha256.trim()       === '') throw new Error('restoredSha256 is required');
+        if (!recoveryReason       || recoveryReason.trim()       === '') throw new Error('recoveryReason is required');
+
+        // Validate SHA-256 format for both hashes
+        if (!SHA256_RE.test(trustedSha256.trim())) {
+            throw new Error(`Invalid trustedSha256: "${trustedSha256}". Must be exactly 64 lowercase hexadecimal characters.`);
+        }
+        if (!SHA256_RE.test(restoredSha256.trim())) {
+            throw new Error(`Invalid restoredSha256: "${restoredSha256}". Must be exactly 64 lowercase hexadecimal characters.`);
+        }
+
+        // ── Integrity verification ──────────────────────────
+        // The restored content MUST match the trusted blockchain hash
+        const trusted  = trustedSha256.trim().toLowerCase();
+        const restored = restoredSha256.trim().toLowerCase();
+        
+        if (trusted !== restored) {
+            throw new Error(
+                `Recovery verification failed: restored hash "${restored}" ` +
+                `does not match trusted blockchain hash "${trusted}". ` +
+                'Cannot record recovery for unverified content.'
+            );
+        }
+
+        // ── Build the recovery audit record ─────────────────
+        const txTimestamp = ctx.stub.getTxTimestamp();
+        const timestampISO = new Date(
+            txTimestamp.seconds.low * 1000 + Math.round(txTimestamp.nanos / 1e6)
+        ).toISOString();
+
+        const recoveryRecord = {
+            docType:               'fileRecoveryRecord',
+            fileId:                fileId.trim(),
+            fileName:              fileName.trim(),
+            userId:                userId.trim(),
+            originalS3VersionId:   originalS3VersionId.trim(),
+            restoredS3VersionId:   restoredS3VersionId.trim(),
+            trustedSha256:         trusted,
+            restoredSha256:        restored,
+            recoveryReason:        recoveryReason.trim(),
+            recoveryTimestamp:     timestampISO,
+            txId:                  ctx.stub.getTxID(),
+            verificationStatus:    'VERIFIED',  // Always verified if we reach here
+        };
+
+        // ── Store recovery record with composite key ────────
+        // Key format: RECOVERY::<fileId>::<timestamp>
+        // Allows querying all recoveries for a file, sorted by time
+        const recoveryKey = `RECOVERY::${fileId.trim()}::${txTimestamp.seconds.low}`;
+        
+        await ctx.stub.putState(
+            recoveryKey,
+            Buffer.from(stringify(sortKeysRecursive(recoveryRecord)))
+        );
+
+        // ── Create index entry for recovery history queries ─
+        const recoveryIndexKey = `RECOVERYIDX::${fileId.trim()}::${txTimestamp.seconds.low}`;
+        await ctx.stub.putState(recoveryIndexKey, Buffer.from(recoveryKey));
+
+        console.log(`[Chaincode] File recovery recorded: ${fileId} by ${userId} at ${timestampISO}`);
+
+        return JSON.stringify(recoveryRecord);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // GetFileRecoveryHistory
+    // ──────────────────────────────────────────────────────────
+    /**
+     * Retrieve all recovery audit records for a given fileId.
+     * 
+     * Returns recovery records in chronological order, showing when
+     * a file was restored and by whom.
+     *
+     * @param {Context} ctx
+     * @param {string}  fileId
+     * @returns {string} JSON array of recovery records
+     */
+    async GetFileRecoveryHistory(ctx, fileId) {
+        if (!fileId || fileId.trim() === '') throw new Error('fileId is required');
+
+        const start = `RECOVERYIDX::${fileId.trim()}::`;
+        const end   = `RECOVERYIDX::${fileId.trim()}::~`;
+        const iterator = await ctx.stub.getStateByRange(start, end);
+
+        const records = [];
+        let result = await iterator.next();
+
+        while (!result.done) {
+            const recoveryKey  = result.value.value.toString('utf8');
+            const recordBytes  = await ctx.stub.getState(recoveryKey);
+
+            if (recordBytes && recordBytes.length > 0) {
+                try {
+                    records.push(JSON.parse(recordBytes.toString()));
+                } catch (_) {
+                    // Malformed record — skip but don't crash the query
+                }
+            }
+            result = await iterator.next();
+        }
+        await iterator.close();
+
+        return JSON.stringify(records);
+    }
 }
 
 module.exports = FileIntegrityContract;

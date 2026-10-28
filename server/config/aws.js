@@ -179,6 +179,66 @@ async function objectExists(key) {
   }
 }
 
+/**
+ * Get a specific version of an S3 object as a stream.
+ * Used for file recovery to retrieve the original uploaded version.
+ *
+ * @param {string} key - S3 object key
+ * @param {string} versionId - S3 VersionId to retrieve
+ * @returns {Promise<{ stream, contentType, contentLength, versionId }>}
+ */
+async function getObjectVersion(key, versionId) {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    VersionId: versionId, // Retrieve specific version
+  });
+  const response = await s3Client.send(command);
+  return {
+    stream:        response.Body,
+    contentType:   response.ContentType,
+    contentLength: response.ContentLength,
+    versionId:     response.VersionId, // Returned VersionId (should match requested)
+  };
+}
+
+/**
+ * Restore a previous version of an object by creating a new current version
+ * with the content from the specified versionId.
+ * 
+ * This preserves S3 versioning history — the corrupted/modified versions
+ * remain in version history, and a new current version is created with
+ * the verified original content.
+ *
+ * @param {string} key - S3 object key
+ * @param {Buffer} buffer - Content from the verified original version
+ * @param {string} contentType - MIME type
+ * @returns {Promise<{ key, versionId }>} - Returns new current version info
+ */
+async function restoreObjectVersion(key, buffer, contentType) {
+  // Upload the verified content as a new version (becomes current)
+  const putResponse = await s3Client.send(new PutObjectCommand({
+    Bucket:      BUCKET,
+    Key:         key,
+    Body:        buffer,
+    ContentType: contentType || 'application/octet-stream',
+    ACL:         'private',
+    Metadata: {
+      'restoration': 'true',
+      'restored-at': new Date().toISOString(),
+    },
+  }));
+
+  const newVersionId = putResponse.VersionId || null;
+  
+  console.log(`[aws.restoreObjectVersion] Restored ${key} — new VersionId: ${newVersionId}`);
+  
+  return {
+    key,
+    versionId: newVersionId,
+  };
+}
+
 module.exports = {
   s3Client,
   uploadToS3,
@@ -187,6 +247,8 @@ module.exports = {
   deleteFromS3,
   listUserFiles,
   objectExists,
+  getObjectVersion,
+  restoreObjectVersion,
   BUCKET,
 };
 

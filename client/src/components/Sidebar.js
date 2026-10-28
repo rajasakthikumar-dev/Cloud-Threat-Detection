@@ -4,7 +4,7 @@ import { useAuth } from '../App';
 import {
   FiHome, FiFolder, FiAlertTriangle,
   FiUsers, FiFileText, FiShield, FiActivity,
-  FiChevronLeft, FiChevronRight,
+  FiChevronLeft, FiChevronRight, FiRotateCcw,
 } from 'react-icons/fi';
 
 /**
@@ -13,8 +13,9 @@ import {
  */
 
 const userNav = [
-  { to: '/dashboard', label: 'Dashboard',  Icon: FiHome },
-  { to: '/files',     label: 'My Files',   Icon: FiFolder },
+  { to: '/dashboard',        label: 'Dashboard',       Icon: FiHome },
+  { to: '/files',            label: 'My Files',        Icon: FiFolder },
+  { to: '/recovered-files',  label: 'Recovered Files', Icon: FiRotateCcw },
 ];
 
 const adminNav = [

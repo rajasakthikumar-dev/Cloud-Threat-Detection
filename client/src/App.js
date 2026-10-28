@@ -17,6 +17,7 @@ import RestrictedPage from './pages/RestrictedPage';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword  from './pages/ResetPassword';
 import BlockchainIntegrity from './pages/BlockchainIntegrity';
+import RecoveredFiles from './pages/RecoveredFiles';
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute';
@@ -206,6 +207,7 @@ function App() {
             <Route element={<ProtectedRoute />}>
               <Route path="/dashboard"        element={<UserDashboard />} />
               <Route path="/files"            element={<FileManagement />} />
+              <Route path="/recovered-files"  element={<RecoveredFiles />} />
             </Route>
 
             {/* Default redirect */}
