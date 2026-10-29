@@ -100,6 +100,15 @@ export default function BlockchainIntegrity() {
       const res = await verifyFileIntegrity(file.key);
       const verification = res.data.verification;
       
+      // Update the file in the files array with verification result
+      setFiles(prevFiles => 
+        prevFiles.map(f => 
+          f.key === file.key 
+            ? { ...f, verification } 
+            : f
+        )
+      );
+      
       setSelectedFile({
         ...file,
         verification,
@@ -111,6 +120,15 @@ export default function BlockchainIntegrity() {
         toast.error(`✗ ${file.name} — Integrity Alert: Hash Mismatch!`);
       }
     } catch (err) {
+      // Update file with error status
+      const errorVerification = { error: true, message: err.response?.data?.message || 'Verification failed' };
+      setFiles(prevFiles => 
+        prevFiles.map(f => 
+          f.key === file.key 
+            ? { ...f, verification: errorVerification } 
+            : f
+        )
+      );
       toast.error(err.response?.data?.message || 'Verification failed');
     } finally {
       setVerifying(null);
@@ -589,6 +607,64 @@ function ProtectedFilesTable({ files, verifying, onVerify, onViewHistory, onView
     }
   };
 
+  /**
+   * Determine integrity status based on available data
+   * 
+   * Status mapping:
+   * - GREEN (VERIFIED): File has been verified with matching hashes (verification.match === true)
+   * - RED (HASH MISMATCH): Verification detected hash mismatch (verification.match === false)
+   * - AMBER (VERIFICATION ERROR): Technical error during verification (verification.error)
+   * - BLUE (RECORDED): Blockchain record exists but no recent verification result
+   * - GRAY (NOT VERIFIED): No blockchain record or unknown status
+   */
+  const getIntegrityStatus = (file) => {
+    // If file has a verification result (from recent verify action)
+    if (file.verification) {
+      if (file.verification.error) {
+        return {
+          label: 'VERIFICATION ERROR',
+          color: '#D97706', // Amber
+          bg: '#FEF3C7',
+          icon: <FiAlertTriangle size={12} />
+        };
+      }
+      if (file.verification.match === true) {
+        return {
+          label: 'VERIFIED',
+          color: '#16A34A', // Green
+          bg: '#DCFCE7',
+          icon: <FiCheckCircle size={12} />
+        };
+      }
+      if (file.verification.match === false) {
+        return {
+          label: 'HASH MISMATCH',
+          color: '#DC2626', // Red
+          bg: '#FEE2E2',
+          icon: <FiAlertTriangle size={12} />
+        };
+      }
+    }
+
+    // If file has blockchain record but no verification result yet
+    if (file.blockchainStatus === 'recorded') {
+      return {
+        label: 'RECORDED',
+        color: '#2563EB', // Blue
+        bg: '#DBEAFE',
+        icon: <FiDatabase size={12} />
+      };
+    }
+
+    // No blockchain record or unknown status
+    return {
+      label: 'NOT VERIFIED',
+      color: '#6B7280', // Gray
+      bg: '#F3F4F6',
+      icon: <FiAlertCircle size={12} />
+    };
+  };
+
   return (
     <div style={{
       background: 'var(--bg-primary)',
@@ -601,7 +677,7 @@ function ProtectedFilesTable({ files, verifying, onVerify, onViewHistory, onView
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ background: 'var(--bg-secondary)' }}>
             <tr>
-              {['File Name', 'Owner', 'S3 Version ID', 'SHA-256', 'Blockchain', 'Uploaded', 'Actions'].map(h => (
+              {['File Name', 'Owner', 'S3 Version ID', 'SHA-256', 'Integrity Status', 'Blockchain', 'Uploaded', 'Actions'].map(h => (
                 <th key={h} style={{
                   padding: '0.875rem 1rem',
                   fontSize: 'var(--font-size-sm)',
@@ -618,69 +694,92 @@ function ProtectedFilesTable({ files, verifying, onVerify, onViewHistory, onView
             </tr>
           </thead>
           <tbody>
-            {files.map(file => (
-              <tr key={file.key} style={{ borderBottom: '1px solid var(--border-color)', transition: 'var(--transition)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-              >
-                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500 }}>
-                  {file.name}
-                </td>
-                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
-                  {file.uploadedBy || '—'}
-                </td>
-                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                  {file.s3VersionId ? file.s3VersionId.substring(0, 20) + '...' : '—'}
-                </td>
-                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                  {file.sha256 ? file.sha256.substring(0, 16) + '...' : '—'}
-                </td>
-                <td style={{ padding: '0.875rem 1rem' }}>
-                  <span style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.375rem',
-                    padding: '0.375rem 0.75rem',
-                    borderRadius: '999px',
-                    fontSize: 'var(--font-size-xs)',
-                    fontWeight: 700,
-                    background: file.blockchainStatus === 'recorded' ? 'var(--success-light)' : 'var(--danger-light)',
-                    color: file.blockchainStatus === 'recorded' ? 'var(--success)' : 'var(--danger)',
-                    textTransform: 'uppercase',
-                  }}>
-                    {file.blockchainStatus === 'recorded' ? <FiCheckCircle size={12} /> : <FiAlertTriangle size={12} />}
-                    {file.blockchainStatus || 'unknown'}
-                  </span>
-                </td>
-                <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
-                  {formatTimestamp(file.uploadedAt)}
-                </td>
-                <td style={{ padding: '0.875rem 1rem' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <ActionButton
-                      icon={<FiCheckCircle size={14} />}
-                      label="Verify"
-                      color="var(--success)"
-                      onClick={() => onVerify(file)}
-                      disabled={verifying === file.key}
-                    />
-                    <ActionButton
-                      icon={<FiClock size={14} />}
-                      label="History"
-                      color="var(--info)"
-                      onClick={() => onViewHistory(file)}
-                      disabled={verifying === file.key}
-                    />
-                    <ActionButton
-                      icon={<FiEye size={14} />}
-                      label="Details"
-                      color="var(--primary)"
-                      onClick={() => onViewDetails(file)}
-                    />
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {files.map(file => {
+              const integrityStatus = getIntegrityStatus(file);
+              
+              return (
+                <tr key={file.key} style={{ borderBottom: '1px solid var(--border-color)', transition: 'var(--transition)' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-base)', color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {file.name}
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                    {file.uploadedBy || '—'}
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                    {file.s3VersionId ? file.s3VersionId.substring(0, 20) + '...' : '—'}
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                    {file.sha256 ? file.sha256.substring(0, 16) + '...' : '—'}
+                  </td>
+                  {/* NEW: Integrity Status Column */}
+                  <td style={{ padding: '0.875rem 1rem' }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.375rem',
+                      padding: '0.375rem 0.75rem',
+                      borderRadius: '999px',
+                      fontSize: 'var(--font-size-xs)',
+                      fontWeight: 700,
+                      background: integrityStatus.bg,
+                      color: integrityStatus.color,
+                      textTransform: 'uppercase',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {integrityStatus.icon}
+                      {integrityStatus.label}
+                    </span>
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem' }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.375rem',
+                      padding: '0.375rem 0.75rem',
+                      borderRadius: '999px',
+                      fontSize: 'var(--font-size-xs)',
+                      fontWeight: 700,
+                      background: file.blockchainStatus === 'recorded' ? 'var(--success-light)' : 'var(--danger-light)',
+                      color: file.blockchainStatus === 'recorded' ? 'var(--success)' : 'var(--danger)',
+                      textTransform: 'uppercase',
+                    }}>
+                      {file.blockchainStatus === 'recorded' ? <FiCheckCircle size={12} /> : <FiAlertTriangle size={12} />}
+                      {file.blockchainStatus || 'unknown'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                    {formatTimestamp(file.uploadedAt)}
+                  </td>
+                  <td style={{ padding: '0.875rem 1rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <ActionButton
+                        icon={<FiCheckCircle size={14} />}
+                        label="Verify"
+                        color="var(--success)"
+                        onClick={() => onVerify(file)}
+                        disabled={verifying === file.key}
+                      />
+                      <ActionButton
+                        icon={<FiClock size={14} />}
+                        label="History"
+                        color="var(--info)"
+                        onClick={() => onViewHistory(file)}
+                        disabled={verifying === file.key}
+                      />
+                      <ActionButton
+                        icon={<FiEye size={14} />}
+                        label="Details"
+                        color="var(--primary)"
+                        onClick={() => onViewDetails(file)}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

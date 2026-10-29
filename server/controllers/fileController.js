@@ -710,27 +710,34 @@ async function getIntegrityFailures(req, res) {
     }
 
     // Query all integrity failure events
+    // NOTE: orderBy('timestamp', 'desc') removed to avoid missing Firestore composite index
+    // Sorting is done in-memory instead
     const snap = await db.collection(COLLECTIONS.ACTIVITY_LOGS)
       .where('event_type', '==', 'integrity_failure')
-      .orderBy('timestamp', 'desc')
       .limit(100) // Limit to recent 100 failures
       .get();
 
-    const failures = snap.docs.map(doc => {
-      const d = doc.data();
-      return {
-        id: doc.id,
-        userId: d.userId,
-        userEmail: d.user_email || d.userEmail,
-        details: d.details,
-        timestamp: d.timestamp?.toDate?.() ? d.timestamp.toDate().toISOString() : d.timestamp,
-        ipAddress: d.ip_address,
-        device: d.device,
-        os: d.os,
-        browser: d.browser,
-        metadata: d.metadata || {},
-      };
-    });
+    const failures = snap.docs
+      .map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          userId: d.userId,
+          userEmail: d.user_email || d.userEmail,
+          details: d.details,
+          timestamp: d.timestamp?.toDate?.() ? d.timestamp.toDate().toISOString() : d.timestamp,
+          _sortKey: d.timestamp?.toMillis?.() || 0,
+          ipAddress: d.ip_address,
+          device: d.device,
+          os: d.os,
+          browser: d.browser,
+          metadata: d.metadata || {},
+        };
+      })
+      // Sort in-memory by timestamp (descending - newest first)
+      .sort((a, b) => b._sortKey - a._sortKey)
+      // Remove sort key before returning
+      .map(({ _sortKey, ...failure }) => failure);
 
     return res.json({ failures });
   } catch (err) {
